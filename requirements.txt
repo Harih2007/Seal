@@ -1,0 +1,10 @@
+streamlit>=1.38
+ultralytics>=8.4.63
+opencv-python-headless>=4.9
+pandas>=2.0
+altair>=5.0
+lap>=0.5.12
+starlette>=0.37.2
+uvicorn>=0.30
+python-multipart>=0.0.9
+matplotlib>=3.8

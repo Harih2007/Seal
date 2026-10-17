@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f8fcfd" />
+  <title>Seal · Underwater Vision</title>
+  <link rel="stylesheet" href="/styles.css?v=tracking-metrics-1" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="wordmark" href="#home" aria-label="Seal home">Seal<span>.</span></a>
+      <nav class="nav" aria-label="Main menu">
+        <button class="nav-link active" data-page="Home">Home</button>
+        <button class="nav-link" data-page="Upload">Upload</button>
+        <button class="nav-link" data-page="Live">Live monitoring</button>
+        <button class="nav-link" data-page="Results">Results</button>
+        <button class="nav-link" data-page="Statistics">Statistics</button>
+        <button class="nav-link" data-page="Species">Species</button>
+      </nav>
+      <div class="top-note">OCEAN VISION · CHENNAI</div>
+    </header>
+
+    <main>
+      <section class="page active" id="page-Home">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow"><span class="eyebrow-icon">◈</span> OCEAN VISION · AI-ASSISTED MONITORING</div>
+            <h1>See what moves<br>beneath the <span>surface.</span></h1>
+              <p>Seal brings fish detection and visual tracking to underwater footage. Upload a clip to inspect frame-by-frame predictions, track IDs, and annotated output.</p>
+            <div class="hero-actions"><button class="button primary home-upload">Start an analysis <span aria-hidden="true">→</span></button><button class="button outline explore-species"><span aria-hidden="true">⌁</span> Explore species</button></div>
+            <div class="hero-footnote">LOCAL PROCESSING · IMAGE-PIXEL TRACKING</div>
+          </div>
+          <svg class="wave" viewBox="0 0 1440 200" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0 55 C165 105 270 20 450 52 S715 110 900 48 S1200 22 1440 82 V200 H0Z" fill="#d8f1f7" opacity=".9"/>
+            <path d="M0 88 C165 42 300 130 490 87 S785 44 970 96 S1260 132 1440 65 V200 H0Z" fill="#42b8dc"/>
+            <path d="M0 113 C210 78 330 145 535 112 S825 82 1020 125 S1270 150 1440 105 V200 H0Z" fill="#087fa7"/>
+          </svg>
+        </div>
+
+        <div class="ocean-descent" id="ocean-descent">
+          <div class="descent-intro"><span class="depth-kicker">A DESCENT THROUGH THE WATER COLUMN</span><h2>Every depth changes<br>what the camera can see.</h2><p>Scroll from sunlit coastal water into the deep. Each layer brings different fish, visibility, and detection problems.</p><div class="descent-cue">SCROLL TO DESCEND <span>↓</span></div></div>
+          <nav class="depth-rail" aria-label="Ocean depth layers"><a href="#zone-sunlight" class="depth-dot active" aria-label="Sunlight zone" title="Sunlight zone"></a><a href="#zone-twilight" class="depth-dot" aria-label="Twilight zone" title="Twilight zone"></a><a href="#zone-midnight" class="depth-dot" aria-label="Midnight zone" title="Midnight zone"></a><a href="#zone-abyss" class="depth-dot" aria-label="Abyss zone" title="Abyss zone"></a><span class="depth-rail-label" id="depth-rail-label">0–200 m</span></nav>
+          <section class="ocean-layer zone-sunlight" id="zone-sunlight" data-depth="0–200 m">
+            <div class="layer-watermark">01</div><div class="fish-silhouette fish-large" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/></svg></div><div class="fish-silhouette fish-small" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/></svg></div>
+            <div class="layer-content"><div class="layer-heading"><span class="depth-kicker">01 · SUNLIGHT ZONE</span><span class="depth-range">0 — 200 M</span></div><h3>Clear light.<br><em>Busy water.</em></h3><p class="layer-lead">Sunlight reaches the upper ocean. Coastal schools and open-water fish move through changing glare, surface shimmer, and suspended particles.</p><div class="layer-facts"><article><span>IN THE MODEL LABEL SET</span><strong><i>Mugil cephalus</i></strong><small>Flathead grey mullet · coastal example</small><strong><i>Coryphaena hippurus</i></strong><small>Common dolphinfish · open-water example</small></article><article class="challenge-card"><span>DETECTION CHALLENGE</span><strong>Glare, waves, and crowded schools</strong><p>Reflections and overlapping fish can split one school into noisy boxes or hide small individuals.</p><b>Response</b><p>Track detections across frames, tune confidence against empty-water footage, and review annotated clips.</p></article></div><div class="layer-footnote">Species shown are examples present in the Fishial classifier metadata, not confirmed local sightings.</div></div>
+          </section>
+          <section class="ocean-layer zone-twilight" id="zone-twilight" data-depth="200–1,000 m">
+            <div class="layer-watermark">02</div><div class="fish-silhouette fish-mid" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/></svg></div><div class="fish-silhouette fish-tiny" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/></svg></div>
+            <div class="layer-content"><div class="layer-heading"><span class="depth-kicker">02 · TWILIGHT ZONE</span><span class="depth-range">200 — 1,000 M</span></div><h3>Blue fades.<br><em>Contrast gets hard.</em></h3><p class="layer-lead">Sunlight falls away and color disappears. Some pelagic fish dive into this dim midwater and return upward later.</p><div class="layer-facts"><article><span>IN THE MODEL LABEL SET</span><strong><i>Thunnus obesus</i></strong><small>Bigeye tuna · known for deep dives</small><strong><i>Xiphias gladius</i></strong><small>Swordfish · dives through deeper water</small></article><article class="challenge-card"><span>DETECTION CHALLENGE</span><strong>Low contrast and motion blur</strong><p>Fish edges blend into blue water; longer exposure can smear fast movement.</p><b>Response</b><p>Use a stable light source, short exposure where possible, and larger inference size for small distant targets.</p></article></div><div class="layer-footnote">Depth use varies by species and life stage; these are broad examples, not fixed depth limits.</div></div>
+          </section>
+          <section class="ocean-layer zone-midnight" id="zone-midnight" data-depth="1,000–4,000 m">
+            <div class="layer-watermark">03</div><div class="fish-silhouette fish-glow" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"/></svg></div><div class="biolume dots-one" aria-hidden="true"></div><div class="biolume dots-two" aria-hidden="true"></div>
+            <div class="layer-content"><div class="layer-heading"><span class="depth-kicker">03 · MIDNIGHT ZONE</span><span class="depth-range">1,000 — 4,000 M</span></div><h3>No sunlight.<br><em>Only evidence.</em></h3><p class="layer-lead">Below the reach of sunlight, camera lighting becomes the scene. The current classifier label set has limited deep-sea representation, so this zone is a coverage gap to measure—not a promise of species ID.</p><div class="layer-facts"><article><span>MODEL COVERAGE</span><strong>Deep-sea labels are limited</strong><small>Do not force a familiar species label onto an unfamiliar fish.</small><strong>Unknown fish → review</strong><small>Keep the detection track and flag its species as unlabelled.</small></article><article class="challenge-card"><span>DETECTION CHALLENGE</span><strong>Darkness, backscatter, and tiny targets</strong><p>Lighting can illuminate particles in front of the lens, creating bright false detections.</p><b>Response</b><p>Angle or diffuse paired lights, control exposure, compare enhanced and original frames, then abstain when species evidence is weak.</p></article></div><div class="layer-footnote">Deep-sea fish silhouettes are illustrative; they do not claim to be classifier classes.</div></div>
+          </section>
+          <section class="ocean-layer zone-abyss" id="zone-abyss" data-depth="4,000 m and deeper">
+            <div class="layer-watermark">04</div><div class="fish-silhouette fish-abyss" aria-hidden="true"><svg viewBox="0 0 220 80"><path d="M12 40C39 12 89 9 145 28l38-23-8 27 34 8-34 8 8 27-38-23C89 71 39 68 12 40Zm55-5a5 5 0 1 0 0 10 5 5 0 0 0-5-5Z"/></svg></div><div class="biolume dots-three" aria-hidden="true"></div>
+            <div class="layer-content"><div class="layer-heading"><span class="depth-kicker">04 · ABYSS & TRENCHES</span><span class="depth-range">4,000 M +</span></div><h3>Pressure. Darkness.<br><em>Unlabelled life.</em></h3><p class="layer-lead">At abyssal depths there is no sunlight, and specialized pressure-rated cameras and lighting are essential. A classifier trained on other species cannot reliably name what it has never learned.</p><div class="layer-facts"><article><span>WHAT SEAL SHOULD REPORT</span><strong>Fish detected · species unlabelled</strong><small>Preserve the box, temporary track ID, confidence, and image-pixel path for expert review.</small><strong>Coverage gap recorded</strong><small>Build a verified deep-sea dataset before adding species claims.</small></article><article class="challenge-card"><span>DETECTION CHALLENGE</span><strong>Extreme darkness and pressure</strong><p>Sensor noise, backscatter, and unfamiliar body shapes can confuse both detection and classification.</p><b>Response</b><p>Use pressure-rated imaging with controlled strobed light, keep detection separate from species ID, and route uncertain tracks for human review.</p></article></div><div class="layer-footnote">Depth bands are simplified oceanographic zones. Inference from video does not establish actual water depth.</div><button class="button primary descent-upload home-upload" type="button">Analyze a video <span aria-hidden="true">→</span></button></div>
+          </section>
+        </div>
+
+        <div class="section-kicker">THE SEAL WORKFLOW</div><h2 class="section-title">From footage to movement.</h2>
+        <div class="feature-grid">
+          <article class="feature-card"><div class="feature-number">01 / DETECT</div><h2>Find fish in the frame</h2><p>Apply a pretrained fish detector to the original underwater frames.</p></article>
+          <article class="feature-card"><div class="feature-number">02 / FOLLOW</div><h2>Follow each track</h2><p>Connect detections through the clip with ByteTrack and temporary IDs.</p></article>
+          <article class="feature-card"><div class="feature-number">03 / REVIEW</div><h2>Review the evidence</h2><p>Watch annotated output and download track coordinates and runtime metrics.</p></article>
+        </div>
+        <p class="disclaimer">Detection counts and runtime are not accuracy scores. Accuracy needs labelled video for comparison.</p>
+      </section>
+
+      <section class="page" id="page-Upload">
+        <div class="page-heading"><div class="eyebrow">START AN ANALYSIS</div><h1>Upload a clip</h1><p>Add an underwater video and run fish detection with tracking. Results open automatically after detection and optional species labelling finish.</p></div>
+        <form id="analyze-form" class="upload-layout">
+          <div class="upload-card">
+            <div class="field-heading"><span class="step">1</span><div><h2>Upload test video</h2><p>Runs use the same bundled Fishial detector for a fair comparison of tracking output and processing speed.</p></div></div>
+            <label class="dropzone" for="video-input"><input id="video-input" name="video" type="file" accept=".mp4,.mov,.avi,.mkv" required><span class="drop-icon">↑</span><strong id="video-filename">Choose a video to upload</strong><small>MP4, MOV, AVI, or MKV</small></label>
+            <label class="background-upload"><span>Optional fish-free background clip</span><input id="background-input" name="background" type="file" accept=".mp4,.mov,.avi,.mkv"><small id="background-filename">Counts detector outputs on an assumed empty-water clip.</small></label>
+            <div class="setting-row"><label for="confidence">Detection confidence</label><output id="confidence-value">0.40</output></div>
+            <input id="confidence" name="confidence" type="range" min="0.05" max="0.90" step="0.05" value="0.40">
+            <div class="range-labels"><span>More detections · more false positives</span><span>Fewer detections</span></div>
+            <div class="option-grid">
+              <label class="option-field" for="enhancement"><span>Frame enhancement</span><select id="enhancement" name="enhancement"><option value="original">Original frames</option><option value="clahe">CLAHE contrast (Streamlit option)</option></select><small>Enhancement may recover detail or add false positives. Compare on the same clip.</small></label>
+              <label class="option-field" for="imgsz"><span>Inference image size</span><select id="imgsz" name="imgsz"><option value="640">640 · faster</option><option value="960">960 · more detail</option><option value="1280">1280 · slowest</option></select><small>Larger sizes may help small fish, with slower processing.</small></label>
+            </div>
+            <label class="background-upload species-toggle"><span>Species identification</span><span><input id="species-input" name="species" type="checkbox" value="true"> Run the same Fishial v10.2 classifier used by Streamlit <small>Runs after tracking and adds processing time. Labels are model candidates, not verified IDs.</small></span></label>
+          </div>
+          <div class="run-row"><div class="privacy-note"><span class="lock">●</span> Files stay on this computer. Detection runs locally.</div><button class="button primary run-button" type="submit" id="run-button">Run detection <span aria-hidden="true">→</span></button></div>
+        </form>
+        <div class="progress-card hidden" id="progress-card"><div class="progress-head"><div><div class="eyebrow">PROCESSING VIDEO</div><h2 id="progress-title">Starting analysis</h2></div><span class="spinner" id="spinner"></span></div><div class="progress-track"><div id="progress-fill"></div></div><div class="progress-copy"><span id="progress-message">Preparing detector…</span><span id="progress-percent">0%</span></div><div class="live-preview-wrap hidden" id="live-preview-wrap"><div class="live-preview-title"><span class="live-dot"></span> LIVE DETECTION PREVIEW <span id="live-preview-frame"></span></div><img id="live-preview" alt="Live annotated detection preview"></div></div>
+        <div class="error-banner hidden" id="error-banner"></div>
+      </section>
+
+      <section class="page" id="page-Live">
+        <div class="page-heading"><div class="eyebrow">CONTINUOUS CAMERA DEMO</div><h1>Live monitoring</h1><p>Loop a local underwater clip through the Fishial detector and ByteTrack as a simulated live feed.</p></div>
+        <div class="live-card">
+          <div class="live-controls">
+            <label class="background-upload live-file"><span>Demo source</span><input id="live-video-input" type="file" accept=".mp4,.mov,.avi,.mkv"><small id="live-source-note">No clip selected. The generated demo clip can be used automatically when available.</small></label>
+            <label class="option-field" for="live-confidence"><span>Detection confidence</span><output id="live-confidence-value">0.40</output><input id="live-confidence" type="range" min="0.05" max="0.90" step="0.05" value="0.40"></label>
+            <label class="option-field" for="live-imgsz"><span>Inference image size</span><select id="live-imgsz"><option value="640">640 · faster</option><option value="960">960 · more detail</option></select></label>
+            <div class="live-actions"><a class="button secondary hidden" id="live-report-link" href="#" download>Export live report PDF</a><button class="button primary" id="live-start" type="button">Start simulated feed <span aria-hidden="true">→</span></button><button class="button secondary hidden" id="live-stop" type="button">Stop feed</button></div>
+          </div>
+          <div class="live-state" id="live-state" role="status"><span class="live-dot"></span><span id="live-state-text">Ready · simulated feed</span></div>
+          <div class="live-stream-wrap"><img id="live-stream" alt="Annotated simulated live fish detection feed"><div class="live-stream-placeholder" id="live-placeholder"><span>≈</span><strong>Live preview will appear here</strong><small>This is a looped video demo, not a connected underwater camera.</small></div></div>
+          <div class="live-stats"><div><span>FISH IN FRAME</span><strong id="live-detections">—</strong></div><div><span>ACTIVE TRACKS</span><strong id="live-tracks">—</strong></div><div><span>CLIP LOOP</span><strong id="live-loop">—</strong></div></div>
+          <p class="disclaimer">Temporary track IDs and image-pixel paths are shown. The repeated clip demonstrates the monitoring interface; it does not represent a real camera feed or marine deployment.</p>
+          <div class="error-banner hidden" id="live-error"></div>
+        </div>
+        <section class="live-analytics">
+          <div class="download-row"><div><div class="eyebrow">CURRENT SIMULATED FEED</div><h2>Live statistics</h2><p>Runtime and spatial summaries update as frames are processed.</p></div></div>
+          <div class="metrics-grid live-metrics-grid" id="live-metrics-grid">
+            <div class="metric"><span>Sampled frames processed</span><strong id="live-metric-frames">—</strong></div>
+            <div class="metric"><span>Mean inference time</span><strong id="live-metric-inference">—</strong></div>
+            <div class="metric"><span>Effective processing rate</span><strong id="live-metric-fps">—</strong></div>
+            <div class="metric"><span>Track IDs this loop</span><strong id="live-metric-ids">—</strong></div>
+            <div class="metric"><span>Feed elapsed</span><strong id="live-metric-elapsed">—</strong></div>
+            <div class="metric"><span>Inference hardware</span><strong id="live-metric-hardware">—</strong></div>
+          </div>
+          <div class="statistics-grid live-chart-grid">
+            <article class="spatial-card"><h2>Fish count over time</h2><p>Frame detections and active tracks per sampled frame.</p><canvas class="live-chart-canvas" id="live-count-chart" aria-label="Live counts over time"></canvas><div class="chart-axes"><span>X · elapsed seconds</span><span>Y · fish detections / tracks</span></div></article>
+            <article class="spatial-card"><h2>Detection heatmap</h2><p>Centroid concentration in normalized camera-view coordinates.</p><canvas class="live-chart-canvas camera-chart" id="live-heatmap-chart" aria-label="Live fish presence heatmap"></canvas><div class="chart-axes"><span>Camera view · normalized 0–1</span></div></article>
+            <article class="spatial-card"><h2>Recent trajectories</h2><p>ByteTrack paths for the current clip loop; paths are image-pixel estimates.</p><canvas class="live-chart-canvas camera-chart" id="live-trajectory-chart" aria-label="Live fish track trajectories"></canvas><div class="chart-axes"><span>X · frame width</span><span>Y · frame height, origin top left</span></div></article>
+          </div>
+          <p class="disclaimer">Precision, recall, mAP@50 and mAP@50–95 need labelled validation footage and are not calculated from this live feed. HOTA, IDF1 and MOTA also need ground-truth tracks. The displayed values are runtime summaries, not accuracy claims.</p>
+        </section>
+      </section>
+
+      <section class="page" id="page-Results">
+        <div class="page-heading"><div class="eyebrow">ANALYSIS OUTPUT</div><h1>Your results</h1><p>Review the annotated video and runtime summary. These metrics do not measure accuracy.</p></div>
+          <div class="empty-state" id="empty-results"><div class="empty-wave">≈</div><h2>No analysis yet</h2><p>Upload a video to create your first result.</p><button class="button primary go-upload">Go to Upload <span aria-hidden="true">→</span></button></div>
+        <div class="results-content hidden" id="results-content">
+          <div class="result-banner"><div><span class="result-status">ANALYSIS COMPLETE</span><h2 id="result-title">Video processed</h2></div><div class="download-actions"><a class="button primary results-report-link" href="#" download>Export report PDF</a><button class="button secondary go-upload">New analysis</button></div></div>
+          <div class="metrics-grid" id="metrics-grid"></div>
+          <div class="species-summary hidden" id="species-summary"><div class="download-row"><div><h2>Species candidates</h2><p id="species-note">Fishial classifier predictions aggregated per ByteTrack ID.</p></div><button class="button secondary open-species" type="button">View species page</button></div><div id="species-table"></div></div>
+          <div class="video-card"><div class="video-heading"><div><h2>Annotated video</h2><p>Colored trails show each ID’s recent path in image pixels; IDs are temporary ByteTrack assignments.</p></div><a class="button primary download-video" href="#" download>Download video ↓</a></div><video id="result-video" controls playsinline preload="metadata"></video><p id="video-playback-message" class="video-playback-message hidden" role="status"></p></div>
+          <div class="download-row"><div><h2>Export data</h2><p>Track coordinates are image-pixel estimates, not real-world distances.</p></div><div class="download-actions"><a class="button secondary download-csv" href="#" download>Download track CSV</a><a class="button secondary download-json" href="#" download>Download benchmark JSON</a></div></div>
+          <div class="download-row challenge-exports"><div><h2>Challenge deliverables</h2><p>MOT format, normalized centroids, per-frame counts, spatial plots and run report.</p></div><div class="download-actions"><a class="button primary download-bundle" href="#" download>Download deliverables ZIP</a></div></div>
+          <div class="download-row"><div><h2>Spatial outputs</h2><p>Static image-pixel plots are below. Open Statistics for interactive 2D charts.</p></div><button class="button secondary" type="button" data-page="Statistics">Open Statistics</button></div>
+          <div class="spatial-grid"><article class="spatial-card"><h2>Fish-presence heatmap</h2><p>Detection-centroid concentration in image pixels.</p><img id="heatmap-image" alt="Fish presence heatmap"><a class="button secondary download-heatmap" href="#" download>Download heatmap</a></article><article class="spatial-card"><h2>Trajectories</h2><p>ByteTrack paths in image-pixel coordinates.</p><img id="trajectory-image" alt="Fish trajectory plot"><a class="button secondary download-trajectories" href="#" download>Download trajectories</a></article></div>
+          <div class="background-summary hidden" id="background-summary"></div>
+          <p class="disclaimer">A result from a pretrained model is a prediction, not a verified species identification. Validate against labelled footage before making accuracy claims.</p>
+        </div>
+      </section>
+
+      <section class="page" id="page-Statistics">
+        <div class="page-heading"><div class="eyebrow">VIDEO ANALYTICS</div><h1>Statistics</h1><p>Interactive 2D views of detections, confidence, and fish paths from the latest uploaded video.</p></div>
+        <div class="empty-state" id="empty-statistics"><div class="empty-wave">≈</div><h2>No video statistics yet</h2><p>Upload and process a video to explore its fish counts, confidence, and image-pixel trajectories.</p><button class="button primary go-upload" type="button">Go to Upload <span aria-hidden="true">→</span></button></div>
+        <div class="statistics-content hidden" id="statistics-content">
+          <div class="result-banner"><div><span class="result-status">LATEST UPLOADED VIDEO</span><h2 id="statistics-title">Video statistics</h2></div><div class="download-actions"><a class="button primary statistics-report-link" href="#" download>Export report PDF</a><button class="button secondary go-upload" type="button">Analyze another video</button></div></div>
+          <div class="metrics-grid" id="statistics-metrics"></div>
+          <p class="disclaimer">These views summarize model detections; they are not accuracy scores. Hover a bar, point, or track for details. Positions and paths are image-pixel estimates, not real-world distances.</p>
+          <article class="spatial-card tracking-evaluation-card">
+            <div class="field-heading"><span class="step">GT</span><div><h2>Tracking accuracy · HOTA, IDF1, MOTA</h2><p>Upload labelled ground-truth tracks for this exact video. Use MOTChallenge format: frame,id,left,top,width,height,mark,… Coordinates must be original video pixels.</p></div></div>
+            <div class="tracking-evaluation-controls"><label class="button secondary" for="tracking-ground-truth">Choose MOT ground truth (.txt/.csv)</label><input id="tracking-ground-truth" type="file" accept=".txt,.csv,text/plain,text/csv"><span id="tracking-ground-truth-name" class="tracking-file-name">No file selected</span><button class="button primary" id="evaluate-tracking" type="button">Calculate tracking scores</button></div>
+            <p class="disclaimer">Scores compare this run with your labels; they are not computed from the model’s own predictions. HOTA is averaged across IoU thresholds 0.05–0.95. IDF1 and MOTA use IoU 0.50. Ensure frame numbering and resolution match.</p>
+            <div id="tracking-evaluation-status" class="tracking-evaluation-status" role="status"></div>
+            <div id="tracking-evaluation-results" class="tracking-evaluation-results hidden"></div>
+          </article>
+          <div class="statistics-grid">
+            <article class="spatial-card"><h2>Fish detections over time</h2><p>Bars show frame detections in two-second bins.</p><div class="three-graph stats-graph" id="stat-count-graph" aria-label="Interactive two-dimensional detections over time chart"></div><div class="chart-axes"><span>X · video time</span><span>Y · detections per bin</span></div></article>
+            <article class="spatial-card"><h2>Track trajectories</h2><p>Each path follows a ByteTrack ID across the camera view.</p><div class="three-graph stats-graph" id="stat-track-graph" aria-label="Interactive two-dimensional fish track trajectories"></div><div class="chart-axes"><span>X · image pixels</span><span>Y · image pixels (origin at top left)</span></div></article>
+            <article class="spatial-card"><h2>Confidence through the clip</h2><p>Each point is one detection; hover to inspect its frame, track, and confidence.</p><div class="three-graph stats-graph" id="stat-confidence-graph" aria-label="Interactive two-dimensional confidence scatter plot"></div><div class="chart-axes"><span>X · video time</span><span>Y · detector confidence</span></div></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-Species">
+        <div class="page-heading"><div class="eyebrow">SPECIES REVIEW</div><h1>Species candidates</h1><p>Fishial v10.2 classifies the largest detected crop for each ByteTrack ID, matching the Streamlit prototype. Results are closed-set candidates and may be wrong.</p></div>
+        <div class="empty-state" id="empty-species"><div class="empty-wave">≈</div><h2>No species analysis yet</h2><p>On Upload, enable species identification, then run a clip.</p><button class="button primary go-upload" type="button">Go to Upload <span aria-hidden="true">→</span></button></div>
+        <div class="species-page-content hidden" id="species-page-content"><div class="result-banner"><div><span class="result-status">LATEST RUN</span><h2 id="species-page-title">Species candidates</h2></div><div class="download-actions"><a class="button primary species-report-link" href="#" download>Export report PDF</a><button class="button secondary go-upload" type="button">New analysis</button></div></div><p id="species-page-note" class="disclaimer"></p><div id="species-page-table"></div>
+          <article class="range-panel">
+            <div class="field-heading"><span class="step">R</span><div><h2>Regional occurrence context</h2><p>Compare the identified species with georeferenced marine records from OBIS. A record outside the submitted area is a range signal to review, not proof of migration or invasion.</p></div></div>
+            <form id="range-form" class="range-controls"><label>Camera longitude<input id="range-lon" type="number" min="-180" max="180" step="any" placeholder="e.g. 80.27" required></label><label>Camera latitude<input id="range-lat" type="number" min="-90" max="90" step="any" placeholder="e.g. 13.08" required></label><label>Local comparison radius<select id="range-radius"><option value="50">50 km</option><option value="100" selected>100 km</option><option value="250">250 km</option><option value="500">500 km</option></select></label><button class="button primary" id="range-submit" type="submit">Look up occurrence data →</button></form>
+            <p class="disclaimer">Enter the camera’s deployment coordinates (longitude, latitude). The app checks public OBIS occurrence data. Missing records can reflect sampling gaps; it does not infer a migration route, native status, or invasiveness.</p>
+            <div id="range-status" class="range-status" role="status"></div>
+            <div id="range-results" class="hidden"><div class="range-result-head"><label>Species view<select id="range-species-select"></select></label><span id="range-source-count"></span></div><div class="range-visuals"><article class="spatial-card"><h3>Recorded locations</h3><p>Marine occurrence records and camera location · longitude/latitude</p><div id="range-map" class="range-map"></div><p id="range-local-summary" class="range-callout"></p></article><article class="spatial-card"><h3>Records by month</h3><p>Seasonality in the returned sample; not a migration calendar.</p><div id="range-month-chart" class="range-month-chart"></div><div class="chart-axes"><span>X · month</span><span>Y · records</span></div></article></div><div id="range-details" class="range-details"></div><p class="disclaimer">Source: <a href="https://obis.org" target="_blank" rel="noopener">Ocean Biodiversity Information System (OBIS)</a>. Occurrence points are reported observations, not validated range boundaries. Use regional expert review before calling a species non-native, migratory, or invasive.</p></div>
+          </article>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span class="wordmark small">Seal<span>.</span></span><span>Underwater vision · image-pixel tracking</span></footer>
+  </div>
+  <script src="https://unpkg.com/three@0.160.1/build/three.min.js" defer></script>
+  <script src="/app.js?v=range-report-v1" defer></script>
+</body>
+</html>
