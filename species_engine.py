@@ -1,5 +1,6 @@
 """Fishial v10.2 species classification shared with the Streamlit prototype."""
 import json
+import os
 import time
 from collections import Counter, defaultdict, deque
 from pathlib import Path
