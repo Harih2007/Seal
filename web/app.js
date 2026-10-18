@@ -955,4 +955,4 @@ liveStop?.addEventListener("click", async () => {
   }
 });
 
-restoreActiveLive();\n
+restoreActiveLive();
