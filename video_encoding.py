@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,8 +39,38 @@ def nvenc_available() -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
+def windows_h264_available() -> bool:
+    """Check that Windows Media Foundation can write a browser-playable H.264 MP4."""
+    if os.name != "nt":
+        return False
+    probe = Path(tempfile.gettempdir()) / f"seal-h264-probe-{os.getpid()}.mp4"
+    writer = None
+    try:
+        writer = cv2.VideoWriter(str(probe), cv2.CAP_MSMF, cv2.VideoWriter_fourcc(*"H264"),
+                                 24.0, (128, 128))
+        if not writer.isOpened():
+            return False
+        black = np.zeros((128, 128, 3), dtype=np.uint8)
+        for _ in range(3):
+            writer.write(black)
+        writer.release()
+        writer = None
+        check = cv2.VideoCapture(str(probe))
+        try:
+            return check.isOpened() and check.read()[0]
+        finally:
+            check.release()
+    except (OSError, cv2.error):
+        return False
+    finally:
+        if writer is not None:
+            writer.release()
+        probe.unlink(missing_ok=True)
+
+
 def preferred_video_suffix() -> str:
-    return ".mp4" if nvenc_available() else ".webm"
+    return ".mp4" if nvenc_available() or windows_h264_available() else ".webm"
 
 
 class NvencVideoWriter:
@@ -104,9 +135,14 @@ class OpenCvVideoWriter:
 
 
 def create_video_writer(path: Path, fps: float, width: int, height: int):
-    """Use NVENC for MP4, falling back to the existing OpenCV encoders."""
+    """Prefer hardware-friendly H.264, falling back to the existing OpenCV encoders."""
     if path.suffix.lower() == ".mp4" and nvenc_available():
         return NvencVideoWriter(path, fps, width, height)
+    if path.suffix.lower() == ".mp4" and windows_h264_available():
+        writer = cv2.VideoWriter(str(path), cv2.CAP_MSMF, cv2.VideoWriter_fourcc(*"H264"),
+                                 fps, (width, height))
+        if writer.isOpened():
+            return OpenCvVideoWriter(writer, "Windows Media Foundation H.264")
     codec = "VP80" if path.suffix.lower() == ".webm" else "mp4v"
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*codec), fps, (width, height))
     if not writer.isOpened():

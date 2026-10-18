@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#f8fcfd" />
   <title>Seal · Underwater Vision</title>
-  <link rel="stylesheet" href="/styles.css?v=tracking-metrics-1" />
+  <link rel="stylesheet" href="/styles.css?v=species-review-labels-1" />
 </head>
 <body>
   <div class="shell">
@@ -97,7 +97,8 @@
           <div class="live-controls">
             <label class="background-upload live-file"><span>Demo source</span><input id="live-video-input" type="file" accept=".mp4,.mov,.avi,.mkv"><small id="live-source-note">No clip selected. The generated demo clip can be used automatically when available.</small></label>
             <label class="option-field" for="live-confidence"><span>Detection confidence</span><output id="live-confidence-value">0.40</output><input id="live-confidence" type="range" min="0.05" max="0.90" step="0.05" value="0.40"></label>
-            <label class="option-field" for="live-imgsz"><span>Inference image size</span><select id="live-imgsz"><option value="640">640 · faster</option><option value="960">960 · more detail</option></select></label>
+            <label class="option-field" for="live-imgsz"><span>Inference image size</span><select id="live-imgsz"><option value="512">512 · fastest</option><option value="640" selected>640 · balanced</option><option value="960">960 · more detail</option></select></label>
+            <label class="species-live-option"><input id="live-species" type="checkbox" checked><span><strong>Identify species in live feed</strong><small>Labels update in the background on CPU so the GPU stays focused on fast detection.</small></span></label>
             <div class="live-actions"><a class="button secondary hidden" id="live-report-link" href="#" download>Export live report PDF</a><button class="button primary" id="live-start" type="button">Start simulated feed <span aria-hidden="true">→</span></button><button class="button secondary hidden" id="live-stop" type="button">Stop feed</button></div>
           </div>
           <div class="live-state" id="live-state" role="status"><span class="live-dot"></span><span id="live-state-text">Ready · simulated feed</span></div>
@@ -121,7 +122,7 @@
             <article class="spatial-card"><h2>Detection heatmap</h2><p>Centroid concentration in normalized camera-view coordinates.</p><canvas class="live-chart-canvas camera-chart" id="live-heatmap-chart" aria-label="Live fish presence heatmap"></canvas><div class="chart-axes"><span>Camera view · normalized 0–1</span></div></article>
             <article class="spatial-card"><h2>Recent trajectories</h2><p>ByteTrack paths for the current clip loop; paths are image-pixel estimates.</p><canvas class="live-chart-canvas camera-chart" id="live-trajectory-chart" aria-label="Live fish track trajectories"></canvas><div class="chart-axes"><span>X · frame width</span><span>Y · frame height, origin top left</span></div></article>
           </div>
-          <p class="disclaimer">Precision, recall, mAP@50 and mAP@50–95 need labelled validation footage and are not calculated from this live feed. HOTA, IDF1 and MOTA also need ground-truth tracks. The displayed values are runtime summaries, not accuracy claims.</p>
+          <p class="disclaimer">Precision, recall, and mAP need labelled validation footage and are not calculated from this live feed. The displayed values are runtime summaries, not accuracy claims.</p>
         </section>
       </section>
 
@@ -149,13 +150,6 @@
           <div class="result-banner"><div><span class="result-status">LATEST UPLOADED VIDEO</span><h2 id="statistics-title">Video statistics</h2></div><div class="download-actions"><a class="button primary statistics-report-link" href="#" download>Export report PDF</a><button class="button secondary go-upload" type="button">Analyze another video</button></div></div>
           <div class="metrics-grid" id="statistics-metrics"></div>
           <p class="disclaimer">These views summarize model detections; they are not accuracy scores. Hover a bar, point, or track for details. Positions and paths are image-pixel estimates, not real-world distances.</p>
-          <article class="spatial-card tracking-evaluation-card">
-            <div class="field-heading"><span class="step">GT</span><div><h2>Tracking accuracy · HOTA, IDF1, MOTA</h2><p>Upload labelled ground-truth tracks for this exact video. Use MOTChallenge format: frame,id,left,top,width,height,mark,… Coordinates must be original video pixels.</p></div></div>
-            <div class="tracking-evaluation-controls"><label class="button secondary" for="tracking-ground-truth">Choose MOT ground truth (.txt/.csv)</label><input id="tracking-ground-truth" type="file" accept=".txt,.csv,text/plain,text/csv"><span id="tracking-ground-truth-name" class="tracking-file-name">No file selected</span><button class="button primary" id="evaluate-tracking" type="button">Calculate tracking scores</button></div>
-            <p class="disclaimer">Scores compare this run with your labels; they are not computed from the model’s own predictions. HOTA is averaged across IoU thresholds 0.05–0.95. IDF1 and MOTA use IoU 0.50. Ensure frame numbering and resolution match.</p>
-            <div id="tracking-evaluation-status" class="tracking-evaluation-status" role="status"></div>
-            <div id="tracking-evaluation-results" class="tracking-evaluation-results hidden"></div>
-          </article>
           <div class="statistics-grid">
             <article class="spatial-card"><h2>Fish detections over time</h2><p>Bars show frame detections in two-second bins.</p><div class="three-graph stats-graph" id="stat-count-graph" aria-label="Interactive two-dimensional detections over time chart"></div><div class="chart-axes"><span>X · video time</span><span>Y · detections per bin</span></div></article>
             <article class="spatial-card"><h2>Track trajectories</h2><p>Each path follows a ByteTrack ID across the camera view.</p><div class="three-graph stats-graph" id="stat-track-graph" aria-label="Interactive two-dimensional fish track trajectories"></div><div class="chart-axes"><span>X · image pixels</span><span>Y · image pixels (origin at top left)</span></div></article>
@@ -173,7 +167,7 @@
             <form id="range-form" class="range-controls"><label>Camera longitude<input id="range-lon" type="number" min="-180" max="180" step="any" placeholder="e.g. 80.27" required></label><label>Camera latitude<input id="range-lat" type="number" min="-90" max="90" step="any" placeholder="e.g. 13.08" required></label><label>Local comparison radius<select id="range-radius"><option value="50">50 km</option><option value="100" selected>100 km</option><option value="250">250 km</option><option value="500">500 km</option></select></label><button class="button primary" id="range-submit" type="submit">Look up occurrence data →</button></form>
             <p class="disclaimer">Enter the camera’s deployment coordinates (longitude, latitude). The app checks public OBIS occurrence data. Missing records can reflect sampling gaps; it does not infer a migration route, native status, or invasiveness.</p>
             <div id="range-status" class="range-status" role="status"></div>
-            <div id="range-results" class="hidden"><div class="range-result-head"><label>Species view<select id="range-species-select"></select></label><span id="range-source-count"></span></div><div class="range-visuals"><article class="spatial-card"><h3>Recorded locations</h3><p>Marine occurrence records and camera location · longitude/latitude</p><div id="range-map" class="range-map"></div><p id="range-local-summary" class="range-callout"></p></article><article class="spatial-card"><h3>Records by month</h3><p>Seasonality in the returned sample; not a migration calendar.</p><div id="range-month-chart" class="range-month-chart"></div><div class="chart-axes"><span>X · month</span><span>Y · records</span></div></article></div><div id="range-details" class="range-details"></div><p class="disclaimer">Source: <a href="https://obis.org" target="_blank" rel="noopener">Ocean Biodiversity Information System (OBIS)</a>. Occurrence points are reported observations, not validated range boundaries. Use regional expert review before calling a species non-native, migratory, or invasive.</p></div>
+        <div id="range-results" class="hidden"><div class="range-result-head"><label>Species view<select id="range-species-select"></select></label><span id="range-source-count"></span></div><div class="range-visuals"><article class="spatial-card"><h3>Recorded locations</h3><p>Local view is centered on the camera; switch to the global sample for context.</p><div class="range-map-toolbar"><div class="range-map-mode" role="group" aria-label="Map extent"><button type="button" data-range-map-mode="local" aria-pressed="true">Local area</button><button type="button" data-range-map-mode="global" aria-pressed="false">Global sample</button></div><span>Click a point to inspect its record details.</span></div><div id="range-map" class="range-map"></div><p id="range-local-summary" class="range-callout"></p><div id="range-selected-record" class="range-record-detail" aria-live="polite"></div></article><article class="spatial-card range-seasonality-card"><h3>Records by month</h3><p id="range-month-note">Month counts for dated records in the plotted sample; not a complete seasonal or migration pattern.</p><div id="range-month-chart" class="range-month-chart"></div><div class="chart-axes"><span>X · month</span><span>Y · sampled records</span></div></article></div><section class="regional-status-card" aria-live="polite"><div><span class="regional-status-kicker">REGIONAL SPECIES STATUS</span><h3 id="regional-status-title">Status not verified</h3><div class="regional-status-tags"><span>Native status · unverified</span><span>Migration · unverified</span></div><p id="regional-status-note">OBIS occurrence dates and locations cannot establish whether a species is native or migratory. Those are separate traits and need a regional checklist or species study.</p></div><a id="regional-status-source" href="https://www.fishbase.se" target="_blank" rel="noopener">Check FishBase profile ↗</a></section><div id="range-details" class="range-details"></div><p class="disclaimer">Source: <a href="https://obis.org" target="_blank" rel="noopener">Ocean Biodiversity Information System (OBIS)</a>. Occurrence points are reported observations, not validated range boundaries. Use regional expert review before calling a species non-native, migratory, or invasive.</p></div>
           </article>
         </div>
       </section>
@@ -181,6 +175,6 @@
     <footer class="footer"><span class="wordmark small">Seal<span>.</span></span><span>Underwater vision · image-pixel tracking</span></footer>
   </div>
   <script src="https://unpkg.com/three@0.160.1/build/three.min.js" defer></script>
-  <script src="/app.js?v=nav-hotfix-1" defer></script>
+  <script src="/app.js?v=judging-run-1" defer></script>
 </body>
 </html>

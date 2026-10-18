@@ -4,6 +4,8 @@ import csv
 import json
 import math
 import os
+import queue
+import re
 import shutil
 import threading
 import time
@@ -11,7 +13,7 @@ import uuid
 import zipfile
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
-from io import BytesIO
+from io import BytesIO, StringIO
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,9 +32,8 @@ import uvicorn
 
 from inference_engine import (resolve_model_path, run_tracking, run_background_check, save_csv,
                              save_deliverable_bundle, track_color)
-from species_engine import classify_tracks
+from species_engine import classify_tracks, load_species_classifier, predict_species_crop
 from video_encoding import preferred_video_suffix
-from tracking_metrics import evaluate_tracking
 
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
@@ -53,6 +54,7 @@ LIVE_DEMO_VIDEO = Path(os.environ["SEAL_LIVE_DEMO_VIDEO"]) if os.environ.get("SE
 live_sessions: dict[str, dict] = {}
 live_lock = threading.Lock()
 detector_execution_lock = threading.Lock()
+review_labels_lock = threading.Lock()
 
 
 def cached_model(model_path: Path) -> YOLO:
@@ -88,7 +90,6 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
             raise ValueError("Could not load this checkpoint. Use an Ultralytics YOLO detection model (.pt) or a ZIP containing one.") from exc
 
         output_path = workdir / f"seal_annotated{preferred_video_suffix()}"
-        species_crops = defaultdict(list) if species_enabled else None
         with detector_execution_lock:
             rows, fields, metrics = run_tracking(
                 model, video_path, output_path, confidence,
@@ -96,7 +97,7 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
                     processed_frames=done, total_frames=total, message=f"Detecting and tracking · {done:,} / {total or '?'} frames"),
                 enhancement=enhancement, imgsz=imgsz,
                 preview_callback=lambda frame, done: save_live_preview(job_id, workdir, frame, done),
-                render_output=not species_enabled, crop_candidates=species_crops,
+                render_output=not species_enabled,
             )
         metrics["annotated_video_extension"] = output_path.suffix.lower()
         metrics["model_file"] = "Fishial detector v26 n3 · detector_v26_n3.zip"
@@ -108,7 +109,6 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
             species_started = time.perf_counter()
             metrics["species_classification"] = classify_tracks(
                 video_path, rows, species_output,
-                crop_candidates=species_crops,
                 progress_callback=lambda done, total: set_job(
                     job_id, progress=done / total if total else 1,
                     processed_frames=done, total_frames=total,
@@ -262,7 +262,7 @@ def persist_live_snapshot(session_id: str, session: dict):
     keys = ("state", "video_path", "frame_number", "loop_count", "detection_count", "track_count",
             "processed_frames", "inference_ms", "mean_inference_ms", "processing_fps", "elapsed_seconds",
             "unique_track_ids_this_loop", "source_fps", "frame_width", "frame_height", "hardware",
-            "count_history", "centroid_history", "error")
+            "count_history", "centroid_history", "species_enabled", "species_labels", "warning", "error")
     with live_lock:
         snapshot = {key: session.get(key) for key in keys}
     folder = RUNS_DIR / "live" / session_id
@@ -270,7 +270,7 @@ def persist_live_snapshot(session_id: str, session: dict):
     (folder / "live_stats.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
 
 
-def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: int):
+def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: int, species_enabled: bool = False):
     """Loop a local clip through the bundled detector and publish annotated JPEG frames."""
     with live_lock:
         session = live_sessions.get(session_id)
@@ -292,22 +292,55 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
         source_fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        stride = max(1, round(source_fps / 15.0))
+        # Target about 20 sampled frames per second; the GPU can usually keep up with
+        # 24 fps clips at 640 px, while higher-rate sources are still sampled down.
+        stride = max(1, round(source_fps / 20.0))
         frame_idx = 0
         loop_count = 1
         from collections import defaultdict, deque
         trails = defaultdict(lambda: deque(maxlen=40))
         last_seen = {}
         loop_track_ids = set()
-        try:
-            model_device = next(model.model.parameters()).device
-            if getattr(model_device, "type", "cpu") == "cuda":
-                import torch
-                device_label = f"GPU · {torch.cuda.get_device_name(model_device)}"
-            else:
-                device_label = "CPU"
-        except Exception:
-            device_label = "Automatic · device unavailable"
+        import torch
+        use_cuda = torch.cuda.is_available()
+        live_device = 0 if use_cuda else "cpu"
+        live_half = use_cuda
+        species_model = species_mapping = None
+        species_labels = {}
+        species_last_classified = {}
+        species_queue = queue.Queue(maxsize=4)
+        species_worker = None
+        if species_enabled:
+            # Keep the detector as the only live CUDA workload. The classifier runs
+            # off-thread on CPU so it cannot exhaust or poison a small GPU context.
+            species_model, species_mapping = load_species_classifier("cpu")
+
+            def classify_live_crops():
+                while not session["stop"].is_set() or not species_queue.empty():
+                    try:
+                        track_id, crop, queued_loop = species_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    try:
+                        prediction = predict_species_crop(species_model, species_mapping, crop, "cpu")
+                        if prediction is not None and queued_loop == loop_count:
+                            species_labels[track_id] = prediction
+                    except Exception as exc:
+                        with live_lock:
+                            session["species_error"] = f"Species label skipped: {exc}"
+                    finally:
+                        species_queue.task_done()
+
+            species_worker = threading.Thread(target=classify_live_crops,
+                                              name=f"seal-species-{session_id[:8]}", daemon=True)
+            species_worker.start()
+        if use_cuda:
+            # Avoid cuDNN benchmarking's extra workspace churn on 4 GB GPUs.
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cuda.matmul.allow_tf32 = True
+            device_label = f"GPU · {torch.cuda.get_device_name(0)}"
+        else:
+            device_label = "CPU"
         with live_lock:
             session.update({"state": "live", "source_fps": round(source_fps, 2), "loop_count": loop_count,
                             "frame_width": source_width, "frame_height": source_height, "hardware": device_label})
@@ -321,6 +354,8 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
                 trails.clear()
                 last_seen.clear()
                 loop_track_ids.clear()
+                species_labels.clear()
+                species_last_classified.clear()
                 with detector_execution_lock:
                     for tracker in getattr(getattr(model, "predictor", None), "trackers", []) or []:
                         if hasattr(tracker, "reset"):
@@ -333,9 +368,45 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
             if (current_frame % stride) != 0:
                 continue
             inference_started = time.perf_counter()
-            with detector_execution_lock:
-                result = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
-                                     imgsz=imgsz, verbose=False)[0]
+            try:
+                with detector_execution_lock:
+                    result = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
+                                         imgsz=imgsz, device=live_device, half=live_half, verbose=False)[0]
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                cuda_failed = use_cuda and any(term in detail.lower() for term in
+                                               ("cuda", "cudnn", "device-side", "launch failure"))
+                if not cuda_failed:
+                    raise
+                # A CUDA launch failure can leave the current context unusable. Drop
+                # the cached GPU model and load a fresh CPU copy, then keep the feed
+                # alive. Healthy runs stay on GPU; CPU is only an emergency fallback.
+                model_key = str(model_path.resolve())
+                with model_lock:
+                    model_cache.pop(model_key, None)
+                stale_model = model
+                model = None
+                del stale_model
+                import gc
+                gc.collect()
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                model = YOLO(str(model_path), task="detect")
+                live_device, live_half, use_cuda = "cpu", False, False
+                device_label = "CPU fallback · CUDA error"
+                trails.clear()
+                last_seen.clear()
+                loop_track_ids.clear()
+                species_labels.clear()
+                species_last_classified.clear()
+                with live_lock:
+                    session.update({"hardware": device_label,
+                                    "warning": "CUDA inference failed; the feed continued on CPU. Restart the app to restore GPU inference."})
+                with detector_execution_lock:
+                    result = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
+                                         imgsz=imgsz, device="cpu", half=False, verbose=False)[0]
             inference_ms = (time.perf_counter() - inference_started) * 1000.0
             boxes = result.boxes
             detections = []
@@ -352,6 +423,19 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
                         x1, y1, x2, y2 = box
                         trails[track_id].append((round((x1 + x2) / 2), round((y1 + y2) / 2)))
                         last_seen[track_id] = current_frame
+                        # Revisit a track every ~2 seconds to refresh its candidate label;
+                        # classifier inference is intentionally decoupled from detector FPS.
+                        if (species_enabled and species_model is not None and
+                                current_frame - species_last_classified.get(track_id, -10000) >= max(1, int(source_fps * 2))):
+                            ix1, iy1 = max(0, int(x1)), max(0, int(y1))
+                            ix2, iy2 = min(frame.shape[1], int(x2)), min(frame.shape[0], int(y2))
+                            crop = frame[iy1:iy2, ix1:ix2]
+                            if crop.size:
+                                try:
+                                    species_queue.put_nowait((track_id, crop.copy(), loop_count))
+                                    species_last_classified[track_id] = current_frame
+                                except queue.Full:
+                                    pass
             # Release Ultralytics result tensors before painting. Draw directly onto the
             # decoded frame to avoid several full-resolution copies on memory-constrained PCs.
             del boxes, result, xyxy, scores, track_ids
@@ -367,7 +451,12 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
             for box, score, track_id in detections:
                 x1, y1, x2, y2 = (int(round(value)) for value in box)
                 color = track_color(track_id) if track_id is not None else (0, 220, 180)
-                label = f"ID {track_id} · {score:.2f}" if track_id is not None else f"Fish · {score:.2f}"
+                species = species_labels.get(track_id) if track_id is not None else None
+                if species:
+                    species_name = "Unlabelled fish" if species["unlabelled"] else species["label"]
+                    label = f"ID {track_id} · {species_name} {species['score']:.2f}"
+                else:
+                    label = f"ID {track_id} · {score:.2f}" if track_id is not None else f"Fish · {score:.2f}"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
                 cv2.putText(frame, label, (max(0, x1), max(20, y1 - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
@@ -405,13 +494,19 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
                                     "inference_total_ms": inference_total_ms,
                                     "processing_fps": round(processed_frames / elapsed, 2),
                                     "unique_track_ids_this_loop": len(loop_track_ids),
+                                    "species_enabled": species_enabled,
+                                    "species_labels": {str(key): value for key, value in species_labels.items()},
                                     "elapsed_seconds": round(elapsed, 1)})
-            session["stop"].wait(max(0.0, (1.0 / 15.0) - (time.perf_counter() - inference_started)))
+            # Run continuously at the fastest rate the detector and renderer sustain.
+            # The source-frame stride above still limits high-fps clips to about 20 FPS.
     except Exception as exc:
         with live_lock:
             session["state"] = "error"
             session["error"] = str(exc)
     finally:
+        session["stop"].set()
+        if 'species_worker' in locals() and species_worker is not None:
+            species_worker.join(timeout=1.0)
         if cap is not None:
             cap.release()
         with live_lock:
@@ -449,7 +544,8 @@ async def start_live(request: Request):
         uploaded = form_data.get("video")
         confidence = float(form_data.get("confidence", "0.40"))
         imgsz = int(form_data.get("imgsz", "640"))
-        if not 0.05 <= confidence <= 0.90 or imgsz not in {640, 960, 1280}:
+        species_enabled = str(form_data.get("species", "false")).lower() in {"1", "true", "yes", "on"}
+        if not 0.05 <= confidence <= 0.90 or imgsz not in {512, 640, 960, 1280}:
             return JSONResponse({"error": "Invalid confidence or image size."}, status_code=400)
         if isinstance(uploaded, UploadFile) and uploaded.filename:
             ext = Path(uploaded.filename).suffix.lower()
@@ -474,7 +570,7 @@ async def start_live(request: Request):
                    "count_history": [], "centroid_history": []}
         with live_lock:
             live_sessions[session_id] = session
-        threading.Thread(target=run_live_loop, args=(session_id, video_path, confidence, imgsz),
+        threading.Thread(target=run_live_loop, args=(session_id, video_path, confidence, imgsz, species_enabled),
                          name=f"seal-live-{session_id[:8]}", daemon=True).start()
         return JSONResponse({"session_id": session_id, "stream_url": f"/api/live/{session_id}/stream"})
     except Exception as exc:
@@ -487,10 +583,10 @@ async def live_status(request: Request):
         session = live_sessions.get(session_id)
         if not session:
             return JSONResponse({"error": "Live session not found."}, status_code=404)
-        keys = ("state", "frame_number", "loop_count", "detection_count", "track_count", "error",
+        keys = ("state", "frame_number", "loop_count", "detection_count", "track_count", "error", "warning",
                 "processed_frames", "inference_ms", "mean_inference_ms", "processing_fps", "elapsed_seconds",
                 "unique_track_ids_this_loop", "source_fps", "frame_width", "frame_height", "hardware",
-                "count_history", "centroid_history")
+                "count_history", "centroid_history", "species_enabled", "species_labels")
         return JSONResponse({key: session.get(key) for key in keys})
 
 
@@ -533,6 +629,97 @@ def result_file(request: Request, filename: str, media_type: str, download_name:
     if not path.is_file():
         return JSONResponse({"error": "This result is not ready."}, status_code=404)
     return FileResponse(path, media_type=media_type, filename=download_name)
+
+
+async def species_review_crop(request: Request):
+    try:
+        track_id = int(request.path_params["track_id"])
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Invalid track ID."}, status_code=400)
+    path = RUNS_DIR / request.path_params["job_id"] / "species_crops" / f"track_{track_id}.jpg"
+    if not path.is_file():
+        return JSONResponse({"error": "No review crop is available for this track."}, status_code=404)
+    return FileResponse(path, media_type="image/jpeg", filename=f"unlabelled_track_{track_id}.jpg")
+
+
+def review_labels_path(workdir: Path) -> Path:
+    return workdir / "species_review_labels.json"
+
+
+async def species_review_labels(request: Request):
+    job_id = request.path_params["job_id"]
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        return JSONResponse({"error": "Invalid analysis ID."}, status_code=400)
+    workdir = RUNS_DIR / job_id
+    if not workdir.is_dir():
+        return JSONResponse({"error": "Analysis not found."}, status_code=404)
+    labels_file = review_labels_path(workdir)
+    if request.method == "GET":
+        try:
+            payload = json.loads(labels_file.read_text(encoding="utf-8")) if labels_file.is_file() else {"labels": {}}
+        except (OSError, json.JSONDecodeError):
+            return JSONResponse({"error": "Saved review labels could not be read."}, status_code=500)
+        return JSONResponse({"labels": payload.get("labels", {})})
+
+    try:
+        body = await request.json()
+        track_id = int(body.get("track_id"))
+        label_type = str(body.get("label_type", "species"))
+        label = str(body.get("label", "")).strip()
+    except (ValueError, TypeError, AttributeError):
+        return JSONResponse({"error": "Enter a valid track ID and label."}, status_code=400)
+    if track_id < 0 or label_type not in {"species", "false_positive"}:
+        return JSONResponse({"error": "Choose a valid species label or false-positive review."}, status_code=400)
+    if label_type == "false_positive":
+        label = "False positive"
+    elif not label or len(label) > 100:
+        return JSONResponse({"error": "Species label must contain 1–100 characters."}, status_code=400)
+    crop_path = workdir / "species_crops" / f"track_{track_id}.jpg"
+    if not crop_path.is_file():
+        return JSONResponse({"error": "No saved review crop exists for this track."}, status_code=404)
+
+    with review_labels_lock:
+        try:
+            payload = json.loads(labels_file.read_text(encoding="utf-8")) if labels_file.is_file() else {"labels": {}}
+        except (OSError, json.JSONDecodeError):
+            payload = {"labels": {}}
+        entry = {"track_id": track_id, "label_type": label_type, "label": label,
+                 "image": f"species_crops/track_{track_id}.jpg", "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        payload.setdefault("labels", {})[str(track_id)] = entry
+        temporary = labels_file.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary.replace(labels_file)
+    return JSONResponse({"saved": True, "entry": entry})
+
+
+async def species_review_dataset(request: Request):
+    job_id = request.path_params["job_id"]
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        return JSONResponse({"error": "Invalid analysis ID."}, status_code=400)
+    workdir = RUNS_DIR / job_id
+    labels_file = review_labels_path(workdir)
+    if not labels_file.is_file():
+        return JSONResponse({"error": "No review labels have been saved for this analysis."}, status_code=404)
+    try:
+        labels = json.loads(labels_file.read_text(encoding="utf-8")).get("labels", {})
+        output = BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+            manifest = StringIO()
+            writer = csv.writer(manifest)
+            writer.writerow(["track_id", "label_type", "label", "image", "updated_at"])
+            for track_id, entry in sorted(labels.items(), key=lambda item: int(item[0])):
+                image_path = workdir / "species_crops" / f"track_{int(track_id)}.jpg"
+                if not image_path.is_file():
+                    continue
+                image_name = f"species_crops/track_{int(track_id)}.jpg"
+                writer.writerow([entry.get("track_id", track_id), entry.get("label_type", "species"),
+                                 entry.get("label", ""), image_name, entry.get("updated_at", "")])
+                archive.write(image_path, image_name)
+            archive.writestr("labels.csv", manifest.getvalue())
+        return Response(output.getvalue(), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="seal_review_labels_{job_id[:8]}.zip"'})
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
+        return JSONResponse({"error": f"Could not export review labels: {exc}"}, status_code=500)
 
 
 def convert_video_to_webm(source: Path, destination: Path):
@@ -582,7 +769,7 @@ async def result_video(request: Request):
         run_metrics = json.loads((run_dir / "seal_benchmark.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         run_metrics = {}
-    if run_metrics.get("video_encoder") == "NVIDIA NVENC H.264":
+    if run_metrics.get("video_encoder") in {"NVIDIA NVENC H.264", "Windows Media Foundation H.264"}:
         return result_file(request, "seal_annotated.mp4", "video/mp4", "seal_annotated.mp4")
     try:
         with video_conversion_lock:
@@ -634,9 +821,12 @@ def fetch_obis_occurrences(scientific_name: str, longitude: float, latitude: flo
                 continue
             if not (-180 <= lon <= 180 and -90 <= lat <= 90):
                 continue
+            dataset_id = str(row.get("datasetID") or "")
             output.append({"lon": lon, "lat": lat, "date": str(row.get("eventDate") or "")[:10],
                            "scientific_name": row.get("scientificName") or scientific_name,
-                           "dataset": row.get("datasetName") or "OBIS dataset", "is_local": is_local})
+                           "dataset": row.get("datasetName") or "OBIS dataset",
+                           "dataset_url": f"https://obis.org/dataset/{dataset_id}" if dataset_id and all(char.isalnum() or char in "-_" for char in dataset_id) else "",
+                           "is_local": is_local})
         return output
     global_points = parse_points(global_data)
     local_points = parse_points(local_data, True)
@@ -694,52 +884,6 @@ async def species_range(request: Request):
         return JSONResponse(payload)
     except (TypeError, ValueError, json.JSONDecodeError):
         return JSONResponse({"error": "Enter valid camera longitude and latitude."}, status_code=400)
-
-
-async def evaluate_job_tracking(request: Request):
-    job_id = request.path_params["job_id"]
-    workdir = RUNS_DIR / job_id
-    metrics_path = workdir / "seal_benchmark.json"
-    prediction_path = workdir / "seal_tracks.csv"
-    if not metrics_path.is_file() or not prediction_path.is_file():
-        return JSONResponse({"error": "Finish processing a video before evaluating its tracks."}, status_code=404)
-    try:
-        form = await request.form()
-        ground_truth = form.get("ground_truth")
-        if not isinstance(ground_truth, UploadFile) or not ground_truth.filename:
-            return JSONResponse({"error": "Upload the labelled MOT ground-truth .txt file."}, status_code=400)
-        if Path(ground_truth.filename).suffix.lower() not in {".txt", ".csv"}:
-            return JSONResponse({"error": "Ground truth must be a MOTChallenge .txt or .csv file."}, status_code=400)
-        raw = await ground_truth.read(50 * 1024 * 1024 + 1)
-        if len(raw) > 50 * 1024 * 1024:
-            return JSONResponse({"error": "Ground-truth file is larger than 50 MB."}, status_code=413)
-        gt_text = raw.decode("utf-8-sig")
-        prediction_text = prediction_path.read_text(encoding="utf-8-sig")
-        result = await run_in_threadpool(evaluate_tracking, gt_text, prediction_text)
-        (workdir / "ground_truth_mot.txt").write_text(gt_text, encoding="utf-8")
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        metrics["tracking_validation"] = {**result, "ground_truth_filename": Path(ground_truth.filename).name}
-        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-        bundle_path = workdir / "challenge_tracking_bundle.zip"
-        if bundle_path.is_file():
-            replacement = workdir / "challenge_tracking_bundle.updated.zip"
-            with zipfile.ZipFile(bundle_path, "r") as source, zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as updated:
-                for item in source.infolist():
-                    if item.filename not in {"seal_benchmark.json", "ground_truth_mot.txt"}:
-                        updated.writestr(item, source.read(item.filename))
-                updated.write(metrics_path, arcname="seal_benchmark.json")
-                updated.write(workdir / "ground_truth_mot.txt", arcname="ground_truth_mot.txt")
-            replacement.replace(bundle_path)
-        with jobs_lock:
-            if job_id in jobs:
-                jobs[job_id]["metrics"] = metrics
-        return JSONResponse(metrics["tracking_validation"])
-    except UnicodeDecodeError:
-        return JSONResponse({"error": "Ground-truth file must be plain UTF-8 text."}, status_code=400)
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:
-        return JSONResponse({"error": f"Could not evaluate tracking metrics: {exc}"}, status_code=500)
 
 
 async def result_artifact(request: Request):
@@ -932,7 +1076,7 @@ def build_report_pdf(title: str, subtitle: str, metric_rows: list[tuple[str, str
             y = .265 - index * .022
             fig.text(.08, y, str(label)[:74], color="#254a5b", fontsize=7.5)
             fig.text(.91, y, str(status)[:30], color="#087fa7", fontsize=7.5, ha="right")
-        fig.text(.08, .065, "Accuracy / tracking scores need labelled validation data. Background detections are a false-positive check, not precision.", color="#526e7d", fontsize=7.5, wrap=True)
+        fig.text(.08, .065, "Accuracy needs labelled validation data. Background detections are a false-positive check, not precision.", color="#526e7d", fontsize=7.5, wrap=True)
         fig.text(.08, .035, "Generated by the local Seal prototype · CHE01 deliverable-oriented summary", color="#718895", fontsize=7.5)
         pdf.savefig(fig, facecolor=fig.get_facecolor())
         plt.close(fig)
@@ -943,9 +1087,6 @@ def make_job_report(workdir: Path, selected_range_species: str | None = None) ->
     metrics = json.loads((workdir / "seal_benchmark.json").read_text(encoding="utf-8"))
     species = metrics.get("species_classification") or {}
     bg = metrics.get("background_video_check") or {}
-    tracking = metrics.get("tracking_validation") or {}
-    tracking_summary = (f"HOTA {tracking['hota_percent']:.2f}% · IDF1 {tracking['idf1_percent']:.2f}% · MOTA {tracking['mota_percent']:.2f}%"
-                        if tracking.get("status") == "scored" else "Requires ground-truth tracks")
     metrics_rows = [
         ("Input video", metrics.get("source_filename", "Uploaded video")),
         ("Model", metrics.get("model_file", "Fishial detector")),
@@ -962,11 +1103,8 @@ def make_job_report(workdir: Path, selected_range_species: str | None = None) ->
         ("Confidence threshold", metrics.get("confidence_threshold", "—")),
         ("Enhancement / image size", f"{metrics.get('frame_enhancement', 'original')} / {metrics.get('inference_image_size', '—')}"),
         ("Precision / Recall / mAP", "Requires labelled validation set"),
-        ("HOTA / IDF1 / MOTA", tracking_summary),
         ("Background detections", f"{bg.get('detection_count', 'Not run')}"),
     ]
-    if tracking.get("status") == "scored":
-        metrics_rows.append(("ID switches / FP / FN", f"{tracking['identity_switches']} / {tracking['false_positives_iou_0_5']} / {tracking['false_negatives_iou_0_5']}"))
     decisions = species.get("species_counts") or []
     species_rows = []
     for item in decisions:
@@ -1049,13 +1187,12 @@ async def live_report(request: Request):
                 ("Current detections / tracks", f"{snapshot.get('detection_count', 0)} / {snapshot.get('track_count', 0)}"),
                 ("Clip loop", str(snapshot.get("loop_count", 0))),
                 ("Precision / Recall / mAP", "Requires labelled validation set"),
-                ("HOTA / IDF1 / MOTA", "Requires ground-truth tracks"),
         ]
         content = await run_in_threadpool(build_report_pdf, "Live monitoring report", "Simulated live feed · not a connected underwater camera",
                                            metrics_rows, [], points, None, None,
                                            [("Live annotated stream", "Simulated clip"),
                                             ("Runtime and spatial samples", "Included in this report"),
-                                            ("Accuracy scores", "Pending labelled validation")],
+                                            ("Detection and tracking summaries", "Included in this report")],
                                            "Track IDs are temporary ByteTrack assignments. Positions are image-pixel estimates.",
                                            snapshot.get("centroid_history", []))
         report_path.write_bytes(content)
@@ -1081,11 +1218,13 @@ routes = [
     Route("/api/jobs/{job_id}", job_status),
     Route("/api/latest", latest_job),
     Route("/api/jobs/{job_id}/preview.jpg", result_preview),
+    Route("/api/jobs/{job_id}/species-crops/{track_id}", species_review_crop),
+    Route("/api/jobs/{job_id}/species-review-labels", species_review_labels, methods=["GET", "POST"]),
+    Route("/api/jobs/{job_id}/species-review-dataset.zip", species_review_dataset),
     Route("/api/jobs/{job_id}/video", result_video),
     Route("/api/jobs/{job_id}/tracks.csv", result_csv),
     Route("/api/jobs/{job_id}/benchmark.json", result_benchmark),
     Route("/api/species/range", species_range, methods=["POST"]),
-    Route("/api/jobs/{job_id}/tracking-metrics", evaluate_job_tracking, methods=["POST"]),
     Route("/api/jobs/{job_id}/report.pdf", job_report),
     Route("/api/jobs/{job_id}/{artifact}", result_artifact),
     Mount("/", app=StaticFiles(directory=WEB_DIR, html=True), name="web"),

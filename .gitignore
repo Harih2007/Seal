@@ -11,6 +11,8 @@ __pycache__/
 .candidate-tmp/
 .pitch-build/
 exports/
+web/latest.json
+web/result_videos/
 weights/*
 !weights/.gitkeep
 classifier_model/*

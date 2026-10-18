@@ -82,7 +82,7 @@ def _prepare_inference_frame(frame, enhancement: str):
 
 def run_tracking(model, video_path: Path, output_path: Path, confidence: float, progress_callback=None,
                  enhancement: str = "original", imgsz: int = 640, preview_callback=None,
-                 render_output: bool = True, crop_candidates=None):
+                 render_output: bool = True):
     """Run the same frame-wise YOLO tracking used in FishTrack, without UI dependencies."""
     # Reuse detector weights across jobs, but do not carry tracker history between videos.
     predictor = getattr(model, "predictor", None)
@@ -125,7 +125,11 @@ def run_tracking(model, video_path: Path, output_path: Path, confidence: float, 
                 result = model.track(inference_frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
                                      imgsz=imgsz, verbose=False)[0]
             except Exception as exc:
-                raise RuntimeError("The checkpoint loaded, but Ultralytics could not run detection/tracking. Check that it is a YOLO detection model.") from exc
+                detail = f"{type(exc).__name__}: {exc}".strip()
+                raise RuntimeError(
+                    "The checkpoint loaded, but Ultralytics could not run detection/tracking. "
+                    f"Underlying error: {detail[:500]}"
+                ) from exc
             inference_seconds += float((result.speed or {}).get("inference", 0.0)) / 1000.0
             boxes = result.boxes
             frame_detections = []
@@ -148,14 +152,6 @@ def run_tracking(model, video_path: Path, output_path: Path, confidence: float, 
                         tracked_ids.add(track_id)
                         trails[track_id].append((round((x1 + x2) / 2), round((y1 + y2) / 2)))
                         trail_last_seen[track_id] = frame_idx
-                        if crop_candidates is not None:
-                            ix1, iy1 = max(0, int(round(x1))), max(0, int(round(y1)))
-                            ix2, iy2 = min(frame.shape[1], int(round(x2))), min(frame.shape[0], int(round(y2)))
-                            crop = frame[iy1:iy2, ix1:ix2]
-                            if crop.size and crop.shape[0] * crop.shape[1] >= 1200:
-                                rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                                crop_candidates[int(track_id)].append((crop.shape[0] * crop.shape[1], frame_idx,
-                                    cv2.resize(rgb, (434, 154), interpolation=cv2.INTER_LINEAR)))
             frame_idx += 1
             should_preview = preview_callback and (frame_idx % max(1, int(fps / 3)) == 0 or frame_idx == 1)
             if render_output or should_preview:

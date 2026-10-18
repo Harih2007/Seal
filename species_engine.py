@@ -16,19 +16,15 @@ _CLASSIFIER_CACHE = {}
 _CLASSIFIER_LOCK = __import__("threading").Lock()
 
 
-def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progress_callback=None,
-                    crop_candidates=None):
-    """Classify several strong crops per track, then assign one stable track label."""
+def load_species_classifier(device=None):
+    """Return the cached Fishial classifier and class mapping for live or batch use."""
     import torch
 
     app_dir = Path(__file__).resolve().parent
     classifier_path = Path(os.environ.get("SEAL_SPECIES_MODEL", app_dir / "classifier_model" / "model.pt"))
     if not classifier_path.is_file():
-        raise FileNotFoundError(
-            "Fishial species classifier weights are missing from classifier_model/model.pt."
-        )
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+        raise FileNotFoundError("Fishial species classifier weights are missing from classifier_model/model.pt.")
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     cache_key = (str(classifier_path.resolve()), device)
     with _CLASSIFIER_LOCK:
         cached = _CLASSIFIER_CACHE.get(cache_key)
@@ -39,8 +35,41 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
                 cached = (classifier, json.loads(mapping_bytes.decode("utf-8").rstrip("\x00")))
                 _CLASSIFIER_CACHE[cache_key] = cached
             except Exception as exc:
-                raise ValueError("Could not load the Streamlit Fishial species classifier bundle.") from exc
-    classifier, class_mapping = cached
+                raise ValueError("Could not load the Fishial species classifier bundle.") from exc
+    return cached
+
+
+def predict_species_crop(classifier, class_mapping, crop_bgr, device):
+    """Classify one live crop; small boxes are ignored to avoid noisy predictions."""
+    import torch
+
+    if crop_bgr.size == 0 or crop_bgr.shape[0] * crop_bgr.shape[1] < 1200:
+        return None
+    image = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+    image = cv2.resize(image, (434, 154), interpolation=cv2.INTER_LINEAR)
+    tensor = torch.from_numpy(image.copy()).permute(2, 0, 1).unsqueeze(0).to(device).float() / 255.0
+    mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+    tensor = (tensor - mean) / std
+    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
+        logits = classifier(tensor)[1]
+    probabilities = torch.softmax(logits.float(), dim=1)[0]
+    score, class_id = probabilities.max(dim=0)
+    entry = class_mapping.get(str(int(class_id)), {})
+    confidence = float(score.item())
+    return {"label": entry.get("label", f"Class {int(class_id)}"),
+            "score": round(confidence, 3),
+            "species_id": entry.get("species_id"),
+            "unlabelled": confidence < 0.40}
+
+
+def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progress_callback=None,
+                    crop_candidates=None):
+    """Classify several strong crops per track, then assign one stable track label."""
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    classifier, class_mapping = load_species_classifier(device)
 
     rows_by_frame: dict[int, list[dict]] = {}
     for row in rows:
@@ -51,6 +80,8 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise ValueError("Could not reopen the uploaded clip for species classification.")
+        crop_sample_interval = max(1, int(round((cap.get(cv2.CAP_PROP_FPS) or 24.0) / 2)))
+        last_crop_frame: dict[int, int] = {}
         frame_idx = 0
         try:
             while True:
@@ -61,16 +92,27 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
                     track_id = row.get("track_id")
                     if track_id is None:
                         continue
+                    track_id = int(track_id)
+                    if frame_idx - last_crop_frame.get(track_id, -crop_sample_interval) < crop_sample_interval:
+                        continue
                     x1, y1, x2, y2 = (int(round(float(row[key]))) for key in ("x1", "y1", "x2", "y2"))
                     x1, y1 = max(0, x1), max(0, y1)
                     x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
                     crop = frame[y1:y2, x1:x2]
                     if crop.size == 0 or crop.shape[0] * crop.shape[1] < 1200:
                         continue
+                    last_crop_frame[track_id] = frame_idx
                     area = crop.shape[0] * crop.shape[1]
                     rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                    crop_candidates[int(track_id)].append((area, frame_idx,
-                        cv2.resize(rgb, (434, 154), interpolation=cv2.INTER_LINEAR)))
+                    pad_x, pad_y = max(4, crop.shape[1] // 8), max(4, crop.shape[0] // 8)
+                    rx1, ry1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+                    rx2, ry2 = min(frame.shape[1], x2 + pad_x), min(frame.shape[0], y2 + pad_y)
+                    review_rgb = cv2.cvtColor(frame[ry1:ry2, rx1:rx2], cv2.COLOR_BGR2RGB)
+                    candidates = crop_candidates[track_id]
+                    candidates.append((area, frame_idx,
+                        cv2.resize(rgb, (434, 154), interpolation=cv2.INTER_LINEAR), review_rgb))
+                    if len(candidates) > 5:
+                        crop_candidates[track_id] = sorted(candidates, key=lambda item: item[0], reverse=True)[:5]
                 frame_idx += 1
         finally:
             cap.release()
@@ -80,12 +122,16 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
     # Keep up to five large crops spaced through the track. Averaging them avoids
     # a single blurred or occluded frame changing the species label.
     selected_crops: dict[int, list[np.ndarray]] = {}
+    review_crops: dict[int, np.ndarray] = {}
     for track_id, candidates in crop_candidates.items():
         chosen, used_frames = [], []
-        for area, candidate_frame, image in sorted(candidates, key=lambda item: item[0], reverse=True):
+        for candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
+            area, candidate_frame, image = candidate[:3]
             if all(abs(candidate_frame - frame) >= 12 for frame in used_frames):
                 chosen.append(image)
                 used_frames.append(candidate_frame)
+                if track_id not in review_crops and len(candidate) > 3:
+                    review_crops[track_id] = candidate[3]
             if len(chosen) == 5:
                 break
         if chosen:
@@ -94,15 +140,18 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
     crop_predictions: dict[int, list[np.ndarray]] = defaultdict(list)
     flat_crops = [(track_id, image) for track_id, images in selected_crops.items() for image in images]
     classification_started = time.perf_counter()
+    batch_size = 32 if device == "cuda" else 16
     with torch.inference_mode():
-        for start in range(0, len(flat_crops), 16):
-            batch = flat_crops[start:start + 16]
+        for start in range(0, len(flat_crops), batch_size):
+            batch = flat_crops[start:start + batch_size]
             # Convert and normalize a whole crop batch at once, avoiding one tensor
             # allocation and device transfer per crop while preserving the same inputs.
             image_array = np.stack([rgb for _track_id, rgb in batch]).astype(np.float32) / 255.0
             image_tensor = torch.from_numpy(image_array).permute(0, 3, 1, 2).to(device)
             image_tensor = (image_tensor - means) / stds
-            probabilities = torch.softmax(classifier(image_tensor)[1], dim=1).cpu().numpy()
+            with torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
+                logits = classifier(image_tensor)[1]
+            probabilities = torch.softmax(logits.float(), dim=1).cpu().numpy()
             for i, (track_id, _image) in enumerate(batch):
                 crop_predictions[track_id].append(probabilities[i])
             if progress_callback:
@@ -137,6 +186,15 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
             "crops_used": len(probabilities),
             "candidate": top3[0]["species"],
         }
+
+    crop_dir = output_path.parent / "species_crops"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+    for track_id, decision in track_decisions.items():
+        review_crop = review_crops.get(track_id)
+        if decision["unlabelled"] and review_crop is not None:
+            crop_path = crop_dir / f"track_{track_id}.jpg"
+            cv2.imwrite(str(crop_path), cv2.cvtColor(review_crop, cv2.COLOR_RGB2BGR),
+                        [cv2.IMWRITE_JPEG_QUALITY, 92])
 
     # Store the same top-3 outputs in the track CSV as the Streamlit app.
     for row in rows:

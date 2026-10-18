@@ -12,12 +12,15 @@ const speciesInput = document.querySelector("#species-input");
 const runButton = document.querySelector("#run-button");
 const progressCard = document.querySelector("#progress-card");
 const errorBanner = document.querySelector("#error-banner");
-let currentJobId = localStorage.getItem("seal-job-id");
+let currentJobId = new URLSearchParams(location.search).get("job") || localStorage.getItem("seal-job-id");
 let pollTimer = null;
 let latestStatistics = null;
 let speciesTableRows = [];
+let speciesReviewLabels = {};
+let speciesReviewJobId = null;
 let speciesRangePayload = null;
-const speciesTablePages = { results: 0, species: 0 };
+let rangeMapMode = "local";
+const speciesTablePages = { results: 0, species: 0, "species-labelled": 0, "species-unlabelled": 0 };
 
 const updateTopbarShape = () => topbar?.classList.toggle("topbar-morphed", window.scrollY > 72);
 window.addEventListener("scroll", updateTopbarShape, { passive: true });
@@ -191,61 +194,36 @@ function setStatistics(jobId, job, rows) {
     ["Mean confidence", meanConfidence == null ? "—" : `${(Number(meanConfidence) * 100).toFixed(1)}%`],
   ];
   document.querySelector("#statistics-metrics").innerHTML = values.map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
-  renderTrackingEvaluation(metrics.tracking_validation);
   document.querySelector("#statistics-title").textContent = `${metrics.resolution || "Video"} · ${Number(metrics.elapsed_seconds || 0).toFixed(1)} s processing`;
   if (document.querySelector("#page-Statistics").classList.contains("active")) renderStatisticsCharts();
 }
 
-function renderTrackingEvaluation(result) {
-  const host = document.querySelector("#tracking-evaluation-results");
-  if (!host) return;
-  if (!result || result.status !== "scored") {
-    host.classList.add("hidden");
-    host.innerHTML = "";
-    return;
-  }
-  const cards = [
-    ["HOTA", `${Number(result.hota_percent).toFixed(2)}%`, "mean IoU 0.05–0.95"],
-    ["IDF1", `${Number(result.idf1_percent).toFixed(2)}%`, "IoU 0.50"],
-    ["MOTA", `${Number(result.mota_percent).toFixed(2)}%`, "IoU 0.50"],
-    ["ID switches", Number(result.identity_switches).toLocaleString(), `${Number(result.false_positives_iou_0_5).toLocaleString()} FP · ${Number(result.false_negatives_iou_0_5).toLocaleString()} FN`],
-  ];
-  host.innerHTML = `<div class="tracking-score-grid">${cards.map(([name, value, note]) => `<div class="metric"><span>${name}</span><strong>${value}</strong><small>${note}</small></div>`).join("")}</div><p class="disclaimer">Compared ${Number(result.frames_compared).toLocaleString()} frames · ${Number(result.ground_truth_detections).toLocaleString()} labelled objects · ${Number(result.prediction_detections).toLocaleString()} tracked predictions · ${escapeHTML(result.ground_truth_filename || "MOT ground truth")}</p>`;
-  host.classList.remove("hidden");
-}
-
-const trackingGroundTruthInput = document.querySelector("#tracking-ground-truth");
-trackingGroundTruthInput?.addEventListener("change", () => {
-  document.querySelector("#tracking-ground-truth-name").textContent = trackingGroundTruthInput.files[0]?.name || "No file selected";
-});
-document.querySelector("#evaluate-tracking")?.addEventListener("click", async (event) => {
-  const button = event.currentTarget;
-  const status = document.querySelector("#tracking-evaluation-status");
-  const file = trackingGroundTruthInput?.files[0];
-  if (!latestStatistics?.jobId) { status.textContent = "Process a video first."; return; }
-  if (!file) { status.textContent = "Choose the labelled MOT ground-truth file first."; return; }
-  button.disabled = true;
-  status.textContent = "Calculating HOTA, IDF1 and MOTA…";
-  try {
-    const data = new FormData();
-    data.append("ground_truth", file);
-    const response = await fetch(`/api/jobs/${latestStatistics.jobId}/tracking-metrics`, { method: "POST", body: data });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Could not evaluate tracking scores.");
-    latestStatistics.job.metrics.tracking_validation = result;
-    renderTrackingEvaluation(result);
-    status.textContent = "Scores calculated. Export the PDF report to include them.";
-    document.querySelector(".statistics-report-link").href = `/api/jobs/${latestStatistics.jobId}/report.pdf?v=${Date.now()}`;
-  } catch (error) {
-    status.textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-
 function renderSpeciesTable(containerId, pageKey) {
   const container = document.getElementById(containerId);
   if (!container) return;
+  if (pageKey === "species") {
+    const labelled = speciesTableRows.filter(([, decision]) => !decision.unlabelled);
+    const unlabelled = speciesTableRows.filter(([, decision]) => decision.unlabelled);
+    const reviewJobId = speciesReviewJobId || latestStatistics?.jobId || currentJobId || localStorage.getItem("seal-job-id");
+    const group = (rows, key, title, includeCrops = false) => {
+      const pageSize = 10;
+      const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+      const page = Math.max(0, Math.min(speciesTablePages[key] || 0, pageCount - 1));
+      speciesTablePages[key] = page;
+      const visible = rows.slice(page * pageSize, (page + 1) * pageSize);
+      const pager = `<div class="species-pager"><span>Showing ${rows.length ? page * pageSize + 1 : 0}–${Math.min((page + 1) * pageSize, rows.length)} of ${rows.length}</span><div><button class="button secondary" type="button" data-species-target="${key}" data-species-page="${page - 1}" ${page === 0 ? "disabled" : ""}>Previous</button><span>Batch ${page + 1} / ${pageCount}</span><button class="button secondary" type="button" data-species-target="${key}" data-species-page="${page + 1}" ${page + 1 >= pageCount ? "disabled" : ""}>Next 10</button></div></div>`;
+      const table = `<div class="species-table-wrap"><table class="species-table"><thead><tr><th>Track ID</th><th>${includeCrops ? "Review crop" : "Species label"}</th><th>Confidence</th><th>Agreement</th><th>Status</th></tr></thead><tbody>${visible.map(([trackId, decision]) => {
+        const cropUrl = `/api/jobs/${encodeURIComponent(reviewJobId || "")}/species-crops/${encodeURIComponent(trackId)}`;
+        const saved = speciesReviewLabels[String(trackId)];
+        const label = includeCrops ? `<div class="species-crop-review"><a class="species-crop-link" href="${cropUrl}" target="_blank" rel="noopener"><img class="species-review-crop" src="${cropUrl}" loading="lazy" alt="Review crop for unlabelled fish, track ${escapeHTML(trackId)}"><span>Open crop</span></a><small>Top candidate: ${escapeHTML(decision.candidate || "Unavailable")}</small></div><form class="species-label-form" data-review-track="${escapeHTML(trackId)}"><label><span>Review label</span><select name="label_type" aria-label="Review type for track ${escapeHTML(trackId)}"><option value="species" ${saved?.label_type !== "false_positive" ? "selected" : ""}>Species name</option><option value="false_positive" ${saved?.label_type === "false_positive" ? "selected" : ""}>False positive</option></select></label><label class="species-review-name ${saved?.label_type === "false_positive" ? "hidden" : ""}"><span>Species</span><input name="label" type="text" maxlength="100" placeholder="e.g. Lutjanus fulviflamma" value="${saved?.label_type !== "false_positive" ? escapeHTML(saved?.label || "") : ""}" ${saved?.label_type === "false_positive" ? "disabled" : "required"}></label><button class="button secondary" type="submit">${saved ? "Update label" : "Save label"}</button><small class="species-label-status" role="status">${saved ? `Saved: ${escapeHTML(saved.label)} · included in training export` : "Saved for later review; this does not change model predictions."}</small></form>` : escapeHTML(decision.label);
+        const status = includeCrops ? saved ? "Reviewed · saved" : "Unlabelled · review" : "Labelled candidate";
+        return `<tr><td>${escapeHTML(trackId)}</td><td>${label}</td><td>${(Number(decision.score) * 100).toFixed(0)}%</td><td>${(Number(decision.agreement) * 100).toFixed(0)}%</td><td>${status}</td></tr>`;
+      }).join("") || `<tr><td colspan="5">${includeCrops ? "No unlabelled tracks in this clip." : "No labelled tracks in this clip."}</td></tr>`}</tbody></table></div>`;
+      return `<section class="species-review-group"><div class="species-review-heading"><h2>${title}</h2><span>${rows.length} tracks</span></div>${includeCrops ? `<div class="species-review-tools"><p class="disclaimer">Add a species name or mark a false positive. Labels and crops are saved with this run for later dataset review; they do not change this model’s predictions.</p><a class="button secondary ${Object.keys(speciesReviewLabels).length ? "" : "hidden"}" href="/api/jobs/${encodeURIComponent(reviewJobId || "")}/species-review-dataset.zip" download>Download reviewed crops + labels</a></div>` : ""}${rows.length > pageSize ? pager : ""}${table}${rows.length > pageSize ? pager : ""}</section>`;
+    };
+    container.innerHTML = group(labelled, "species-labelled", "Labelled candidates") + group(unlabelled, "species-unlabelled", "Unlabelled detections", true);
+    return;
+  }
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(speciesTableRows.length / pageSize));
   const page = Math.max(0, Math.min(speciesTablePages[pageKey] || 0, pageCount - 1));
@@ -259,8 +237,60 @@ document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-species-target][data-species-page]");
   if (!button || button.disabled) return;
   speciesTablePages[button.dataset.speciesTarget] = Number(button.dataset.speciesPage);
-  renderSpeciesTable(button.dataset.speciesTarget === "results" ? "species-table" : "species-page-table", button.dataset.speciesTarget);
+  const isResults = button.dataset.speciesTarget === "results";
+  renderSpeciesTable(isResults ? "species-table" : "species-page-table", isResults ? "results" : "species");
 });
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest(".species-label-form select[name=label_type]");
+  if (!select) return;
+  const input = select.form.elements.label;
+  const nameField = select.form.querySelector(".species-review-name");
+  const isFalsePositive = select.value === "false_positive";
+  input.disabled = isFalsePositive;
+  input.required = !isFalsePositive;
+  nameField.classList.toggle("hidden", isFalsePositive);
+});
+
+document.addEventListener("submit", async (event) => {
+  const reviewForm = event.target.closest(".species-label-form[data-review-track]");
+  if (!reviewForm) return;
+  event.preventDefault();
+  const jobId = speciesReviewJobId || latestStatistics?.jobId || currentJobId || localStorage.getItem("seal-job-id");
+  const status = reviewForm.querySelector(".species-label-status");
+  const button = reviewForm.querySelector("button[type=submit]");
+  if (!jobId) { status.textContent = "No analysis run is selected."; return; }
+  button.disabled = true;
+  status.textContent = "Saving label…";
+  try {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/species-review-labels`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track_id: reviewForm.dataset.reviewTrack, label_type: reviewForm.elements.label_type.value, label: reviewForm.elements.label.value }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not save this label.");
+    speciesReviewLabels[String(result.entry.track_id)] = result.entry;
+    renderSpeciesTable("species-table", "results");
+    renderSpeciesTable("species-page-table", "species");
+  } catch (error) {
+    status.textContent = error.message || "Could not save this label.";
+    button.disabled = false;
+  }
+});
+
+async function loadSpeciesReviewLabels(jobId) {
+  speciesReviewJobId = jobId;
+  speciesReviewLabels = {};
+  try {
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/species-review-labels`);
+    if (!response.ok) return;
+    const result = await response.json();
+    if (speciesReviewJobId !== jobId) return;
+    speciesReviewLabels = result.labels || {};
+    renderSpeciesTable("species-table", "results");
+    renderSpeciesTable("species-page-table", "species");
+  } catch { /* Keep the review UI usable if saved annotations cannot be loaded. */ }
+}
 
 function greatCircleKm(a, b) {
   const rad = (degrees) => degrees * Math.PI / 180;
@@ -275,17 +305,25 @@ function renderRangeSpecies() {
   if (!entry) return;
   const { longitude, latitude, radius_km: radius } = speciesRangePayload;
   const points = entry.points || [];
+  const fishbaseName = String(entry.species || "").trim().replace(/\s+/g, "_");
+  document.querySelector("#regional-status-title").textContent = `Native / migratory status: unverified for ${entry.species}`;
+  document.querySelector("#regional-status-source").href = `https://www.fishbase.se/summary/${encodeURIComponent(fishbaseName)}.html`;
   const nearby = points.filter((point) => greatCircleKm({ lon: longitude, lat: latitude }, point) <= radius);
   const distances = points.map((point) => ({ ...point, distance: greatCircleKm({ lon: longitude, lat: latitude }, point) })).sort((a, b) => a.distance - b.distance);
-  document.querySelector("#range-source-count").textContent = `OBIS reports ${Number(entry.total || 0).toLocaleString()} total records · ${points.length} georeferenced points sampled`;
+  document.querySelector("#range-source-count").textContent = `OBIS total: ${Number(entry.total || 0).toLocaleString()} · Mapped sample: ${points.length} points · Regional query: ${Number(entry.local_window_total || 0).toLocaleString()} records`;
   document.querySelector("#range-local-summary").textContent = nearby.length
-    ? `${nearby.length} sampled point${nearby.length === 1 ? "" : "s"} falls within ${radius} km; OBIS reports ${Number(entry.local_window_total || 0).toLocaleString()} records in the surrounding regional query window. This supports documented occurrence, not proof of a resident population.`
+    ? `${nearby.length} of the mapped sample points fall within ${radius} km. OBIS reports ${Number(entry.local_window_total || 0).toLocaleString()} records in the surrounding regional query window. These are reported occurrences, not proof of a resident population.`
     : Number(entry.local_window_total || 0) > 0
       ? `OBIS reports ${Number(entry.local_window_total).toLocaleString()} records in the surrounding regional query window, but no returned point sample falls inside the exact ${radius} km circle. This is inconclusive; inspect the records and source datasets.`
       : `No records were returned from the surrounding regional query window for this taxon. That does not establish absence; coverage can be sparse.`;
   const W = 720, H = 340, pad = { l: 42, r: 18, t: 18, b: 34 }, innerW = W - pad.l - pad.r, innerH = H - pad.t - pad.b;
-  const x = (lon) => pad.l + (lon + 180) / 360 * innerW;
-  const y = (lat) => pad.t + (90 - lat) / 180 * innerH;
+  const localLatSpan = Math.min(85, Math.max(0.2, radius / 110.574 * 1.3));
+  const localLonSpan = Math.min(180, localLatSpan / Math.max(0.1, Math.cos(latitude * Math.PI / 180)));
+  const mapBounds = rangeMapMode === "local"
+    ? { west: Math.max(-180, longitude - localLonSpan), east: Math.min(180, longitude + localLonSpan), south: Math.max(-90, latitude - localLatSpan), north: Math.min(90, latitude + localLatSpan) }
+    : { west: -180, east: 180, south: -90, north: 90 };
+  const x = (lon) => pad.l + (lon - mapBounds.west) / Math.max(0.001, mapBounds.east - mapBounds.west) * innerW;
+  const y = (lat) => pad.t + (mapBounds.north - lat) / Math.max(0.001, mapBounds.north - mapBounds.south) * innerH;
   const continents = [
     "-168,70 -145,60 -130,52 -124,40 -117,32 -105,25 -97,18 -83,9 -78,25 -80,34 -70,45 -60,52 -75,60 -100,72 -130,72",
     "-81,12 -70,8 -61,-2 -50,-8 -45,-20 -53,-34 -68,-55 -75,-42 -79,-20",
@@ -295,12 +333,34 @@ function renderRangeSpecies() {
     "112,-11 130,-12 145,-18 153,-28 145,-39 130,-35 115,-25",
     "-50,82 -20,80 -25,62 -42,58 -55,68"
   ];
-  const grid = [-120, -60, 0, 60, 120].map((v) => `<line x1="${x(v)}" y1="${pad.t}" x2="${x(v)}" y2="${H-pad.b}"/><text x="${x(v)}" y="${H-12}" text-anchor="middle">${v}°</text>`).join("") + [-60, -30, 0, 30, 60].map((v) => `<line x1="${pad.l}" y1="${y(v)}" x2="${W-pad.r}" y2="${y(v)}"/><text x="${pad.l-8}" y="${y(v)+3}" text-anchor="end">${v}°</text>`).join("");
-  const shapes = continents.map((coords) => `<polygon points="${coords.trim().split(/\s+/).map((pair) => { const [lon, lat] = pair.split(",").map(Number); return `${x(lon)},${y(lat)}`; }).join(" ")}"/>`).join("");
-  const markers = points.map((point) => { const isLocal = greatCircleKm({ lon: longitude, lat: latitude }, point) <= radius; return `<circle class="range-point${isLocal ? " local" : ""}" cx="${x(point.lon)}" cy="${y(point.lat)}" r="${points.length > 65 ? 3 : 4}"><title>${escapeHTML(entry.species)} · ${point.lat.toFixed(3)}, ${point.lon.toFixed(3)} · ${escapeHTML(point.date || "date unavailable")} · ${escapeHTML(point.dataset)}</title></circle>`; }).join("");
-  document.querySelector("#range-map").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sampled marine occurrences of ${escapeHTML(entry.species)} and camera position on a longitude latitude map"><rect x="${pad.l}" y="${pad.t}" width="${innerW}" height="${innerH}" rx="10" class="map-ocean"/><g class="map-grid">${grid}</g><g class="map-land">${shapes}</g>${markers}<circle class="camera-point" cx="${x(longitude)}" cy="${y(latitude)}" r="7"><title>Camera: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}</title></circle><text x="${x(longitude)+10}" y="${y(latitude)-10}" class="camera-label">Camera</text></svg><div class="map-legend"><span><i class="legend-record"></i> OBIS occurrence</span><span><i class="legend-camera"></i> Camera position</span></div>`;
+  const lonStep = rangeMapMode === "local" ? (mapBounds.east - mapBounds.west) / 4 : 60;
+  const latStep = rangeMapMode === "local" ? (mapBounds.north - mapBounds.south) / 4 : 30;
+  const lonTicks = Array.from({ length: 5 }, (_, index) => mapBounds.west + lonStep * index);
+  const latTicks = Array.from({ length: 5 }, (_, index) => mapBounds.south + latStep * index);
+  const grid = lonTicks.map((v) => `<line x1="${x(v)}" y1="${pad.t}" x2="${x(v)}" y2="${H-pad.b}"/><text x="${x(v)}" y="${H-12}" text-anchor="middle">${v.toFixed(1)}°</text>`).join("") + latTicks.map((v) => `<line x1="${pad.l}" y1="${y(v)}" x2="${W-pad.r}" y2="${y(v)}"/><text x="${pad.l-8}" y="${y(v)+3}" text-anchor="end">${v.toFixed(1)}°</text>`).join("");
+  const shapes = rangeMapMode === "global" ? continents.map((coords) => `<polygon points="${coords.trim().split(/\s+/).map((pair) => { const [lon, lat] = pair.split(",").map(Number); return `${x(lon)},${y(lat)}`; }).join(" ")}"/>`).join("") : "";
+  const markers = points.map((point, index) => {
+    const isLocal = greatCircleKm({ lon: longitude, lat: latitude }, point) <= radius;
+    const inView = point.lon >= mapBounds.west && point.lon <= mapBounds.east && point.lat >= mapBounds.south && point.lat <= mapBounds.north;
+    if (!inView) return "";
+    return `<circle class="range-point${isLocal ? " local" : ""}" data-range-point="${index}" cx="${x(point.lon)}" cy="${y(point.lat)}" r="${isLocal ? 5 : 3.5}" tabindex="0" role="button" aria-label="Inspect ${escapeHTML(entry.species)} record at ${point.lat.toFixed(3)}, ${point.lon.toFixed(3)}"><title>${escapeHTML(entry.species)} · ${point.lat.toFixed(3)}, ${point.lon.toFixed(3)} · ${escapeHTML(point.date || "date unavailable")} · ${escapeHTML(point.dataset)}</title></circle>`;
+  }).join("");
+  document.querySelectorAll("[data-range-map-mode]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.rangeMapMode === rangeMapMode)));
+  const radiusRx = (radius / 110.574) / (mapBounds.east - mapBounds.west) * innerW;
+  const radiusRy = (radius / 110.574) / (mapBounds.north - mapBounds.south) * innerH;
+  document.querySelector("#range-map").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${rangeMapMode === "local" ? "Local-area" : "Global"} view of sampled marine occurrences for ${escapeHTML(entry.species)}"><rect x="${pad.l}" y="${pad.t}" width="${innerW}" height="${innerH}" rx="10" class="map-ocean"/><g class="map-grid">${grid}</g><g class="map-land">${shapes}</g>${rangeMapMode === "local" ? `<ellipse class="range-radius-ring" cx="${x(longitude)}" cy="${y(latitude)}" rx="${radiusRx}" ry="${radiusRy}"/>` : ""}${markers}<circle class="camera-point" cx="${x(longitude)}" cy="${y(latitude)}" r="7"><title>Camera: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}</title></circle><text x="${x(longitude)+10}" y="${y(latitude)-10}" class="camera-label">Camera</text></svg><div class="map-legend"><span><i class="legend-record"></i> OBIS occurrence</span><span><i class="legend-local"></i> Within ${radius} km</span><span><i class="legend-camera"></i> Camera position</span></div>`;
+  const inViewCount = points.filter((point) => point.lon >= mapBounds.west && point.lon <= mapBounds.east && point.lat >= mapBounds.south && point.lat <= mapBounds.north).length;
+  document.querySelector("#range-map").setAttribute("aria-label", `${inViewCount} of ${points.length} sampled points are shown in the ${rangeMapMode} map view.`);
+  document.querySelectorAll("[data-range-point]").forEach((marker) => {
+    const inspect = () => { const point = points[Number(marker.dataset.rangePoint)]; if (!point) return; const distance = greatCircleKm({ lon: longitude, lat: latitude }, point); const source = point.dataset_url ? `<a href="${escapeHTML(point.dataset_url)}" target="_blank" rel="noopener">Open OBIS dataset</a>` : escapeHTML(point.dataset || "OBIS dataset"); document.querySelector("#range-selected-record").innerHTML = `<strong>Selected occurrence</strong><br>${escapeHTML(point.scientific_name || entry.species)} · ${point.lat.toFixed(4)}°, ${point.lon.toFixed(4)}° · ${Math.round(distance).toLocaleString()} km from camera<br>Recorded: ${escapeHTML(point.date || "date unavailable")} · Source: ${source}`; };
+    marker.addEventListener("click", inspect);
+    marker.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); inspect(); } });
+  });
+  document.querySelector("#range-selected-record").textContent = `${inViewCount} sampled points shown here. Select a marker for its date, coordinates, distance, and source dataset.`;
   const months = Array(12).fill(0);
   points.forEach((point) => { const month = Number(point.date?.slice(5, 7)); if (month >= 1 && month <= 12) months[month - 1] += 1; });
+  const datedCount = months.reduce((sum, count) => sum + count, 0);
+  document.querySelector("#range-month-note").textContent = `${datedCount} dated records shown from ${points.length} mapped sample points. The bounded sample is not a complete seasonal or migration pattern.`;
   const max = Math.max(1, ...months);
   const labels = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   document.querySelector("#range-month-chart").innerHTML = `<div class="month-bars">${months.map((count, index) => `<div class="month-column" title="${labels[index]}: ${count} records"><span>${count || ""}</span><i style="height:${count ? Math.max(4, count / max * 100) : 2}%"></i><small>${labels[index]}</small></div>`).join("")}</div>`;
@@ -317,6 +377,13 @@ function updateRangeReportLinks(selectedSpecies) {
   const href = selectedSpecies ? `${base}?range_species=${encodeURIComponent(selectedSpecies)}` : base;
   document.querySelectorAll(".results-report-link,.statistics-report-link,.species-report-link").forEach((link) => { link.href = href; });
 }
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-range-map-mode]");
+  if (!button || !speciesRangePayload) return;
+  rangeMapMode = button.dataset.rangeMapMode === "global" ? "global" : "local";
+  renderRangeSpecies();
+});
 
 document.querySelector("#range-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -558,13 +625,18 @@ function renderResults(jobId, job) {
   if (species) {
     const decisions = Object.entries(species.track_decisions || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
     speciesTableRows = decisions;
+    speciesReviewJobId = jobId;
+    speciesReviewLabels = {};
     speciesTablePages.results = 0;
     speciesTablePages.species = 0;
+    speciesTablePages["species-labelled"] = 0;
+    speciesTablePages["species-unlabelled"] = 0;
     renderSpeciesTable("species-table", "results");
     renderSpeciesTable("species-page-table", "species");
     document.querySelector("#species-note").textContent = `${species.classifier} · ${species.classifier_device.toUpperCase()} · ${species.classified_tracks} classified tracks. ${species.note}`;
     document.querySelector("#species-page-note").textContent = `${species.classifier} · ${species.classifier_device.toUpperCase()} · ${species.classified_tracks} classified tracks. ${species.note}`;
     document.querySelector("#species-page-title").textContent = `${species.species_count} candidate species across ${species.classified_tracks} tracks`;
+    loadSpeciesReviewLabels(jobId);
   }
   const videoUrl = job.video_url || `/api/jobs/${jobId}/video`;
   const csvUrl = job.csv_url || `/api/jobs/${jobId}/tracks.csv`;
@@ -753,7 +825,7 @@ async function pollLiveStatus() {
     document.querySelector("#live-tracks").textContent = state.frame_number ? state.track_count : "—";
     document.querySelector("#live-loop").textContent = state.frame_number ? state.loop_count : "—";
     if (state.state === "loading") setLiveState("Loading Fishial detector…");
-    if (state.state === "live") setLiveState(`Simulated feed running · loop ${state.loop_count}`, true);
+    if (state.state === "live") setLiveState(`Simulated feed running · loop ${state.loop_count}${state.species_enabled ? ` · ${Object.keys(state.species_labels || {}).length} species tracks` : ""}${state.warning ? " · CPU fallback after CUDA error" : ""}`, true);
     if (state.state === "error") {
       document.querySelector("#live-error").textContent = state.error || "Live monitoring stopped unexpectedly.";
       document.querySelector("#live-error").classList.remove("hidden");
@@ -909,6 +981,7 @@ liveStart?.addEventListener("click", async () => {
   if (liveInput.files[0]) formData.append("video", liveInput.files[0]);
   formData.append("confidence", document.querySelector("#live-confidence").value);
   formData.append("imgsz", document.querySelector("#live-imgsz").value);
+  formData.append("species", document.querySelector("#live-species")?.checked ? "true" : "false");
   try {
     const response = await fetch("/api/live/start", { method: "POST", body: formData });
     const raw = await response.text();
