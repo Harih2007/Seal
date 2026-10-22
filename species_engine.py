@@ -51,7 +51,9 @@ def predict_species_crop(classifier, class_mapping, crop_bgr, device):
     mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
     tensor = (tensor - mean) / std
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
+    # GTX 1650 lacks Tensor Cores. FP16 autocast was substantially slower than
+    # FP32 in local benchmarks, so keep species predictions in FP32 on all devices.
+    with torch.inference_mode():
         logits = classifier(tensor)[1]
     probabilities = torch.softmax(logits.float(), dim=1)[0]
     score, class_id = probabilities.max(dim=0)
@@ -149,8 +151,7 @@ def classify_tracks(video_path: Path, rows: list[dict], output_path: Path, progr
             image_array = np.stack([rgb for _track_id, rgb in batch]).astype(np.float32) / 255.0
             image_tensor = torch.from_numpy(image_array).permute(0, 3, 1, 2).to(device)
             image_tensor = (image_tensor - means) / stds
-            with torch.autocast("cuda", dtype=torch.float16, enabled=device == "cuda"):
-                logits = classifier(image_tensor)[1]
+            logits = classifier(image_tensor)[1]
             probabilities = torch.softmax(logits.float(), dim=1).cpu().numpy()
             for i, (track_id, _image) in enumerate(batch):
                 crop_predictions[track_id].append(probabilities[i])

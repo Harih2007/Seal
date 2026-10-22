@@ -23,8 +23,7 @@ def track_color(track_id: int) -> tuple[int, int, int]:
 
 
 def draw_track_trails(frame, trails, frame_idx=None, last_seen=None, max_gap=6):
-    """Draw translucent recent centroid paths; coordinates are image pixels."""
-    overlay = frame.copy()
+    """Draw recent centroid paths directly on a frame; coordinates are image pixels."""
     for track_id, points in trails.items():
         if not points:
             continue
@@ -33,9 +32,9 @@ def draw_track_trails(frame, trails, frame_idx=None, last_seen=None, max_gap=6):
         color = track_color(track_id)
         if len(points) > 1:
             polyline = np.asarray(points, dtype=np.int32).reshape((-1, 1, 2))
-            cv2.polylines(overlay, [polyline], False, color, 3, cv2.LINE_AA)
-        cv2.circle(overlay, points[-1], 5, color, -1, cv2.LINE_AA)
-    return cv2.addWeighted(overlay, 0.78, frame, 0.22, 0)
+            cv2.polylines(frame, [polyline], False, color, 2, cv2.LINE_AA)
+        cv2.circle(frame, points[-1], 4, color, -1, cv2.LINE_AA)
+    return frame
 
 
 def extract_model(archive_path: Path, destination: Path) -> Path:
@@ -82,7 +81,7 @@ def _prepare_inference_frame(frame, enhancement: str):
 
 def run_tracking(model, video_path: Path, output_path: Path, confidence: float, progress_callback=None,
                  enhancement: str = "original", imgsz: int = 640, preview_callback=None,
-                 render_output: bool = True):
+                 render_output: bool = True, crop_candidates=None):
     """Run the same frame-wise YOLO tracking used in FishTrack, without UI dependencies."""
     # Reuse detector weights across jobs, but do not carry tracker history between videos.
     predictor = getattr(model, "predictor", None)
@@ -98,6 +97,17 @@ def run_tracking(model, video_path: Path, output_path: Path, confidence: float, 
     if width <= 0 or height <= 0:
         cap.release()
         raise ValueError("The uploaded video has no readable frames.")
+    try:
+        import torch
+        inference_device = 0 if torch.cuda.is_available() else "cpu"
+        gpu_memory_gb = (torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                         if inference_device != "cpu" else 0)
+    except Exception:
+        inference_device = "cpu"
+        gpu_memory_gb = 0
+    # Batch nearby frames through the GPU for better utilization. Ultralytics
+    # updates ByteTrack in frame order for each result in a batch.
+    inference_batch_size = 8 if gpu_memory_gb >= 4 else (4 if inference_device != "cpu" else 1)
     writer = None
     if render_output:
         writer = create_video_writer(output_path, fps, width, height)
@@ -109,67 +119,103 @@ def run_tracking(model, video_path: Path, output_path: Path, confidence: float, 
     rows, tracked_ids = [], set()
     trails = defaultdict(lambda: deque(maxlen=60))
     trail_last_seen = {}
+    crop_sample_interval = max(1, int(round(fps / 2)))
+    crop_last_seen = {}
     reference_frame = None
     frame_idx = 0
     inference_seconds = 0.0
     started = time.perf_counter()
+
+    def process_frame(frame, result):
+        nonlocal reference_frame, frame_idx, inference_seconds
+        if reference_frame is None and render_output:
+            reference_frame = frame.copy()
+        inference_seconds += float((result.speed or {}).get("inference", 0.0)) / 1000.0
+        boxes = result.boxes
+        frame_detections = []
+        if boxes is not None and len(boxes):
+            xyxy, scores = boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist()
+            class_ids = boxes.cls.int().cpu().tolist()
+            track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(xyxy)
+            for box, score, class_id, track_id in zip(xyxy, scores, class_ids, track_ids):
+                x1, y1, x2, y2 = box
+                names = model.names
+                class_name = names.get(class_id, str(class_id)) if isinstance(names, dict) else names[class_id]
+                if track_id is not None:
+                    track_id = int(track_id)
+                frame_detections.append((box, score, class_name, track_id))
+                rows.append({"frame": frame_idx, "time_seconds": round(frame_idx / fps, 3), "track_id": track_id,
+                    "class_id": class_id, "class_name": class_name, "confidence": round(score, 4),
+                    "x1": round(x1, 2), "y1": round(y1, 2), "x2": round(x2, 2), "y2": round(y2, 2),
+                    "center_x": round((x1 + x2) / 2, 2), "center_y": round((y1 + y2) / 2, 2)})
+                if track_id is not None:
+                    if (crop_candidates is not None and
+                            frame_idx - crop_last_seen.get(track_id, -crop_sample_interval) >= crop_sample_interval):
+                        ix1, iy1 = max(0, int(round(x1))), max(0, int(round(y1)))
+                        ix2, iy2 = min(frame.shape[1], int(round(x2))), min(frame.shape[0], int(round(y2)))
+                        crop = frame[iy1:iy2, ix1:ix2]
+                        if crop.size and crop.shape[0] * crop.shape[1] >= 1200:
+                            crop_last_seen[track_id] = frame_idx
+                            area = crop.shape[0] * crop.shape[1]
+                            rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                            pad_x, pad_y = max(4, crop.shape[1] // 8), max(4, crop.shape[0] // 8)
+                            rx1, ry1 = max(0, ix1 - pad_x), max(0, iy1 - pad_y)
+                            rx2, ry2 = min(frame.shape[1], ix2 + pad_x), min(frame.shape[0], iy2 + pad_y)
+                            review_rgb = cv2.cvtColor(frame[ry1:ry2, rx1:rx2], cv2.COLOR_BGR2RGB)
+                            candidates = crop_candidates[track_id]
+                            candidates.append((area, frame_idx,
+                                cv2.resize(rgb, (434, 154), interpolation=cv2.INTER_LINEAR), review_rgb))
+                            if len(candidates) > 5:
+                                crop_candidates[track_id] = sorted(candidates, key=lambda item: item[0], reverse=True)[:5]
+                    tracked_ids.add(track_id)
+                    trails[track_id].append((round((x1 + x2) / 2), round((y1 + y2) / 2)))
+                    trail_last_seen[track_id] = frame_idx
+        frame_idx += 1
+        should_preview = preview_callback and (frame_idx % max(1, int(fps / 3)) == 0 or frame_idx == 1)
+        if render_output or should_preview:
+            annotated = draw_track_trails(frame.copy(), trails, frame_idx - 1, trail_last_seen)
+            for box, score, class_name, track_id in frame_detections:
+                x1, y1, x2, y2 = (int(round(value)) for value in box)
+                color = track_color(track_id) if track_id is not None else (0, 220, 180)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+                label = f"ID {track_id} | {class_name} {score:.2f}" if track_id is not None else f"{class_name} {score:.2f}"
+                cv2.putText(annotated, label[:70], (max(0, x1), max(20, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
+        if render_output:
+            writer.write(annotated)
+        if should_preview:
+            preview_callback(annotated, frame_idx)
+        if progress_callback and (frame_idx % max(1, int(fps)) == 0 or (total_frames and frame_idx == total_frames)):
+            progress_callback(frame_idx, total_frames)
+
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
+            frames = []
+            for _ in range(inference_batch_size):
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frames.append(frame)
+            if not frames:
                 break
-            if reference_frame is None and render_output:
-                reference_frame = frame.copy()
-            inference_frame = _prepare_inference_frame(frame, enhancement)
+            inference_frames = [_prepare_inference_frame(frame, enhancement) for frame in frames]
             try:
-                result = model.track(inference_frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
-                                     imgsz=imgsz, verbose=False)[0]
+                if len(inference_frames) == 1:
+                    results = model.track(inference_frames[0], persist=True, tracker="bytetrack.yaml", conf=confidence,
+                                          imgsz=imgsz, device=inference_device, verbose=False)
+                else:
+                    results = model.track(inference_frames, persist=True, tracker="bytetrack.yaml", conf=confidence,
+                                          imgsz=imgsz, device=inference_device, verbose=False)
             except Exception as exc:
                 detail = f"{type(exc).__name__}: {exc}".strip()
                 raise RuntimeError(
                     "The checkpoint loaded, but Ultralytics could not run detection/tracking. "
                     f"Underlying error: {detail[:500]}"
                 ) from exc
-            inference_seconds += float((result.speed or {}).get("inference", 0.0)) / 1000.0
-            boxes = result.boxes
-            frame_detections = []
-            if boxes is not None and len(boxes):
-                xyxy, scores = boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist()
-                class_ids = boxes.cls.int().cpu().tolist()
-                track_ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(xyxy)
-                for box, score, class_id, track_id in zip(xyxy, scores, class_ids, track_ids):
-                    x1, y1, x2, y2 = box
-                    names = model.names
-                    class_name = names.get(class_id, str(class_id)) if isinstance(names, dict) else names[class_id]
-                    if track_id is not None:
-                        track_id = int(track_id)
-                    frame_detections.append((box, score, class_name, track_id))
-                    rows.append({"frame": frame_idx, "time_seconds": round(frame_idx / fps, 3), "track_id": track_id,
-                        "class_id": class_id, "class_name": class_name, "confidence": round(score, 4),
-                        "x1": round(x1, 2), "y1": round(y1, 2), "x2": round(x2, 2), "y2": round(y2, 2),
-                        "center_x": round((x1 + x2) / 2, 2), "center_y": round((y1 + y2) / 2, 2)})
-                    if track_id is not None:
-                        tracked_ids.add(track_id)
-                        trails[track_id].append((round((x1 + x2) / 2), round((y1 + y2) / 2)))
-                        trail_last_seen[track_id] = frame_idx
-            frame_idx += 1
-            should_preview = preview_callback and (frame_idx % max(1, int(fps / 3)) == 0 or frame_idx == 1)
-            if render_output or should_preview:
-                # Draw only sampled previews when the species pass will produce the final annotated video.
-                annotated = draw_track_trails(frame.copy(), trails, frame_idx - 1, trail_last_seen)
-                for box, score, class_name, track_id in frame_detections:
-                    x1, y1, x2, y2 = (int(round(value)) for value in box)
-                    color = track_color(track_id) if track_id is not None else (0, 220, 180)
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
-                    label = f"ID {track_id} | {class_name} {score:.2f}" if track_id is not None else f"{class_name} {score:.2f}"
-                    cv2.putText(annotated, label[:70], (max(0, x1), max(20, y1 - 8)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
-            if render_output:
-                writer.write(annotated)
-            if should_preview:
-                preview_callback(annotated, frame_idx)
-            if progress_callback and (frame_idx % max(1, int(fps)) == 0 or (total_frames and frame_idx == total_frames)):
-                progress_callback(frame_idx, total_frames)
+            if len(results) != len(frames):
+                raise RuntimeError(f"Detector returned {len(results)} results for {len(frames)} input frames.")
+            for frame, result in zip(frames, results):
+                process_frame(frame, result)
     finally:
         cap.release()
         if writer is not None:

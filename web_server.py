@@ -27,9 +27,10 @@ from starlette.responses import FileResponse, JSONResponse, Response, StreamingR
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.requests import Request
-from ultralytics import YOLO
+from ultralytics import YOLO  # Used for the model cache type annotation.
 import uvicorn
 
+from fishial_loader import load_fishial_detector
 from inference_engine import (resolve_model_path, run_tracking, run_background_check, save_csv,
                              save_deliverable_bundle, track_color)
 from species_engine import classify_tracks, load_species_classifier, predict_species_crop
@@ -61,7 +62,14 @@ def cached_model(model_path: Path) -> YOLO:
     key = str(model_path.resolve())
     with model_lock:
         if key not in model_cache:
-            model_cache[key] = YOLO(key, task="detect")
+            model = load_fishial_detector(key)
+            # Fold Conv/BatchNorm pairs once when the model is cached. This keeps
+            # the same detector weights and predictions while trimming per-frame work.
+            try:
+                model.model.fuse()
+            except (AttributeError, RuntimeError, TypeError):
+                pass
+            model_cache[key] = model
         return model_cache[key]
 
 
@@ -90,6 +98,7 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
             raise ValueError("Could not load this checkpoint. Use an Ultralytics YOLO detection model (.pt) or a ZIP containing one.") from exc
 
         output_path = workdir / f"seal_annotated{preferred_video_suffix()}"
+        crop_candidates = defaultdict(list) if species_enabled else None
         with detector_execution_lock:
             rows, fields, metrics = run_tracking(
                 model, video_path, output_path, confidence,
@@ -98,6 +107,7 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
                 enhancement=enhancement, imgsz=imgsz,
                 preview_callback=lambda frame, done: save_live_preview(job_id, workdir, frame, done),
                 render_output=not species_enabled,
+                crop_candidates=crop_candidates,
             )
         metrics["annotated_video_extension"] = output_path.suffix.lower()
         metrics["model_file"] = "Fishial detector v26 n3 · detector_v26_n3.zip"
@@ -114,6 +124,7 @@ def process_job(job_id: str, workdir: Path, video_path: Path, confidence: float,
                     processed_frames=done, total_frames=total,
                     message=f"Classifying fish tracks · {done:,} / {total or 0:,} tracks",
                 ),
+                crop_candidates=crop_candidates,
             )
             metrics["species_classification_seconds"] = round(time.perf_counter() - species_started, 3)
             metrics["video_encoder"] = metrics["species_classification"].get("video_encoder", "unknown")
@@ -304,7 +315,6 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
         import torch
         use_cuda = torch.cuda.is_available()
         live_device = 0 if use_cuda else "cpu"
-        live_half = use_cuda
         species_model = species_mapping = None
         species_labels = {}
         species_last_classified = {}
@@ -371,7 +381,7 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
             try:
                 with detector_execution_lock:
                     result = model.track(frame, persist=True, tracker="bytetrack.yaml", conf=confidence,
-                                         imgsz=imgsz, device=live_device, half=live_half, verbose=False)[0]
+                                         imgsz=imgsz, device=live_device, verbose=False)[0]
             except Exception as exc:
                 detail = f"{type(exc).__name__}: {exc}"
                 cuda_failed = use_cuda and any(term in detail.lower() for term in
@@ -393,8 +403,8 @@ def run_live_loop(session_id: str, video_path: Path, confidence: float, imgsz: i
                     torch.cuda.empty_cache()
                 except Exception:
                     pass
-                model = YOLO(str(model_path), task="detect")
-                live_device, live_half, use_cuda = "cpu", False, False
+                model = load_fishial_detector(model_path)
+                live_device, use_cuda = "cpu", False
                 device_label = "CPU fallback · CUDA error"
                 trails.clear()
                 last_seen.clear()

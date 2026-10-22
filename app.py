@@ -18,7 +18,7 @@ import altair as alt
 import cv2
 import pandas as pd
 import streamlit as st
-from ultralytics import YOLO
+from fishial_loader import load_fishial_detector
 
 
 st.set_page_config(page_title="Seal · Underwater Vision", page_icon="🌊", layout="wide")
@@ -414,7 +414,7 @@ if page == "Upload" and st.button("Run fish detection and tracking", type="prima
         try:
             model_path = get_model_path(model_upload_path, temp)
             try:
-                model = YOLO(str(model_path), task="detect")
+                model = load_fishial_detector(model_path)
             except Exception as exc:
                 raise ValueError(
                     "Could not load this checkpoint with Ultralytics. Upload the Fishial detector export (.pt/.torchscript), "
